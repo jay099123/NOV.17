@@ -1,0 +1,23 @@
+node_modules/
+.next/
+out/
+.tools/
+.qa/
+*.tsbuildinfo
+.env*
+!.env.example
+
+# Additional local content. Monthly content is in /public/memories/ below.
+/data/*.local.*
+/data/private/
+
+# Personal photos and songs, including any files added later.
+/public/homepage/
+/public/memories/
+/public/photos/
+/public/audio/
+/public/private/
+
+# Local planning, source materials and handoff notes.
+/private/
+/HANDOFF.md

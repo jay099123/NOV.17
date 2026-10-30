@@ -1,0 +1,33 @@
+export type Palette = "lime" | "pink" | "blue" | "orange" | "violet";
+export type Photo = { src: string; alt: string; caption: string };
+export type Song = { title: string; artist: string; src: string };
+export type Homepage = {
+  name: string;
+  greeting: string;
+  startText: string;
+  musicHint: string;
+  musicPlayingText: string;
+  palette: Palette;
+  photo: Pick<Photo, "src" | "alt">;
+  song: Song;
+  isSample: boolean;
+};
+export type Question = { prompt: string; options: string[]; answer: number; reveal: string };
+export type Memory = {
+  id: string;
+  year: number;
+  month: string;
+  english: string;
+  label: string;
+  title: [string, string];
+  body: string;
+  note: string;
+  palette: Palette;
+  kind: "story" | "concert" | "quiz" | "little-things" | "birthday";
+  photos: Photo[];
+  song: Song;
+  concert?: { number: number; name: string; venue: string };
+  quiz?: Question;
+  interaction?: { action: string; reveal: string };
+  letter?: string;
+};
