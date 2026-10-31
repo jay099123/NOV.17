@@ -7,9 +7,10 @@ export const project = {
   name: "NOV.17",
   greeting: "HAPPY BIRTHDAY!!!",
   startText: "播放我們的這一年",
+  intro: { lines: ["歡迎來到 OUR REWIND", "準備好了嗎", "一起開始吧"], playLabel: "開始回顧" },
   musicHint: "點一下合照，播放生日歌",
   musicPlayingText: "生日歌播放中 · 再點一下暫停",
-  palette: "lime",
+  colors: { background: "yellow-300", photoBackground: "violet-200", text: "gray-900", bodyText: "gray-700" },
   photo: { src: "/homepage/photos/couple-cutout.png", alt: "示意情侶的透明去背合照" },
   song: { src: "/homepage/audio/intro.wav", title: "Birthday Intro", artist: "NOV.17 · 原創示範音樂" },
   isSample: true,
@@ -21,7 +22,7 @@ export const memories: Memory[] = [
   {
     id: "2025-11", year: 2025, month: "11", english: "NOV", label: "故事從你開始", title: ["第一首歌，", "想和你一起聽。"],
     body: "一杯喝不完的咖啡，一段捨不得走完的路。\n這一年的播放清單，就從這個普通的下午開始。", note: "EVERY GOOD STORY STARTS SOMEWHERE.",
-    palette: "lime", kind: "story", photos: [photo(0, "our first track"), photo(2, "one more walk with you")], song: song(1, "The First Page"),
+    colors: { background: "lime-300", photoBackground: "violet-300", text: "gray-900", bodyText: "lime-950" }, kind: "story", photos: [photo(0, "our first track"), photo(2, "one more walk with you")], song: song(1, "The First Page"),
   },
   {
     id: "2025-12", year: 2025, month: "12", english: "DEC", label: "第一次，把喜歡唱很大聲", title: ["全場都在唱，", "我只想看著你。"],

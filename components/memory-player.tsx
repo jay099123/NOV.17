@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Headphones, Heart, Mail, Play, RotateCcw, Sparkles, Star, Ticket } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Check, Heart, Mail, Play, RotateCcw, Sparkles, Star, Ticket } from "lucide-react";
 import { memories, project } from "@/data/memories";
 import type { Memory, Photo } from "@/data/memory-types";
+import RewindYears from "@/components/rewind-years";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 const concertCount = memories.filter((memory) => memory.kind === "concert").length;
@@ -16,6 +18,12 @@ function Flower({ className = "" }: { className?: string }) {
   </svg>;
 }
 
+function HomepageStar({ className = "" }: { className?: string }) {
+  return <svg className={`homepage-spark ${className}`} viewBox="0 0 100 100" aria-hidden="true">
+    <polygon points="50,2 61,36 97,36 68,57 79,92 50,71 21,92 32,57 3,36 39,36" fill="currentColor" />
+  </svg>;
+}
+
 function PhotoVisual({ photo }: { photo: Photo }) {
   return <img className="photo-visual" src={photo.src} alt={photo.alt} loading="lazy" decoding="async" data-photo-src={photo.src} />;
 }
@@ -24,21 +32,67 @@ function PhotoFrame({ photo, className = "" }: { photo: Photo; className?: strin
   return <figure className={`photo-frame ${className}`}><div className="photo-window"><PhotoVisual photo={photo} /></div><figcaption><span>{photo.caption}</span><ArrowUpRight size={13} /></figcaption></figure>;
 }
 
-function Cover({ onStart, onToggleMusic, musicPlaying }: { onStart: () => void; onToggleMusic: () => void; musicPlaying: boolean }) {
-  return <div className="homepage">
+function Cover({ onEnter, onPlayMusic, musicPlaying }: {
+  onEnter: () => void;
+  onPlayMusic: () => Promise<boolean>;
+  musicPlaying: boolean;
+}) {
+  const pathname = usePathname();
+  const phase = useRef<"idle" | "starting" | "playing" | "entering">("idle");
+  const enterRequested = useRef(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = pathname === "/home";
+    if (!active.current) { phase.current = "idle"; enterRequested.current = false; }
+    return () => { active.current = false; };
+  }, [pathname]);
+  const beginMusic = async () => {
+    if (!active.current || pathname !== "/home" || phase.current === "entering") return;
+    if (phase.current === "playing") { phase.current = "entering"; onEnter(); return; }
+    if (phase.current === "starting") { enterRequested.current = true; return; }
+    phase.current = "starting";
+    const playing = await onPlayMusic();
+    if (!active.current) return;
+    if (!playing) { phase.current = "idle"; enterRequested.current = false; return; }
+    phase.current = "playing";
+    if (enterRequested.current) { phase.current = "entering"; onEnter(); }
+  };
+  return <div className="homepage" onClick={() => { void beginMusic(); }}>
     <div className="homepage-heading">
       <h1 className="homepage-title">{project.name}</h1>
       <p className="homepage-greeting">{project.greeting}</p>
     </div>
-    <button className={`homepage-portrait ${musicPlaying ? "is-playing" : ""}`} onClick={onToggleMusic} aria-label={musicPlaying ? "暫停主頁音樂" : "播放主頁音樂"} aria-pressed={musicPlaying} data-testid="homepage-music">
+    <button className="homepage-portrait" onClick={(event) => {
+      event.stopPropagation();
+      void beginMusic();
+    }} aria-label={musicPlaying ? "進入歡迎頁" : "播放主頁音樂"} aria-pressed={musicPlaying} data-testid="homepage-music">
       <img className="homepage-cutout" src={project.photo.src} alt={project.photo.alt} decoding="async" fetchPriority="high" data-photo-src={project.photo.src} />
     </button>
-    <div className="homepage-actions">
-      <p className="homepage-music-hint" aria-live="polite"><Headphones size={12} />{musicPlaying ? project.musicPlayingText : project.musicHint}</p>
-      <button className="start-button" onClick={onStart} data-testid="start"><span className="button-play"><Play size={17} fill="currentColor" /></span>{project.startText}<ArrowUpRight size={20} /></button>
+    <HomepageStar className="spark-left" />
+    <HomepageStar className="spark-right" />
+  </div>;
+}
+
+function Intro({ onStart }: { onStart: () => void }) {
+  const intro = project.intro ?? {
+    lines: ["歡迎來到 OUR REWIND", "準備好了嗎", "一起開始吧"],
+    playLabel: "開始回顧",
+  };
+  return <div className="intro-page">
+    <div className="intro-copy">
+      {intro.lines.map((line, index) => {
+        const style = { "--intro-delay": `${.15 + index * .8}s` } as CSSProperties;
+        return index === 0
+          ? <h1 key={index} className="intro-line intro-title" style={style}>{line}</h1>
+          : <p key={index} className="intro-line" style={style}>{line}</p>;
+      })}
     </div>
-    <span className="homepage-spark spark-left" aria-hidden="true">✳</span>
-    <span className="homepage-spark spark-right" aria-hidden="true">✳</span>
+    <button className="intro-play" onClick={onStart} aria-label={intro.playLabel} style={{ "--intro-delay": `${.15 + intro.lines.length * .8}s` } as CSSProperties} data-testid="start">
+      <Play fill="currentColor" strokeWidth={1.5} aria-hidden="true" />
+    </button>
+    <RewindYears />
+    <HomepageStar className="spark-left" />
+    <HomepageStar className="spark-right" />
   </div>;
 }
 
@@ -93,30 +147,32 @@ function MemoryCard({ memory, index, selected, onAnswer, collected, onCollect, l
   </div>;
 }
 
-function MonthNavigation({ started, index, timelineRef, onMonth, onStart, onReplay }: {
-  started: boolean;
+function MonthNavigation({ index, timelineRef, onMonth, onReplay }: {
   index: number;
   timelineRef: RefObject<HTMLElement | null>;
   onMonth: (index: number) => void;
-  onStart: () => void;
   onReplay: () => void;
 }) {
-  const lastMonth = started && index === memories.length - 1;
+  const lastMonth = index === memories.length - 1;
   return <div className="slide-navigation" data-testid="slide-navigation">
-    <button className="slide-nav-arrow" disabled={!started || index === 0} onClick={() => onMonth(index - 1)} aria-label="上一個月"><ArrowLeft size={19} /></button>
+    <button className="slide-nav-arrow" disabled={index === 0} onClick={() => onMonth(index - 1)} aria-label="上一個月"><ArrowLeft size={19} /></button>
     <nav className="month-timeline" ref={timelineRef} aria-label="月份時間軸">
-      {memories.map((item, i) => <button key={item.id} className={`month-button ${started && i === index ? "active" : ""}`} data-month={item.id} onClick={() => onMonth(i)} aria-label={`前往 ${item.year} 年 ${Number(item.month)} 月${item.concert ? "，演唱會" : ""}`} aria-current={started && i === index ? "step" : undefined}>
+      {memories.map((item, i) => <button key={item.id} className={`month-button ${i === index ? "active" : ""}`} data-month={item.id} onClick={() => onMonth(i)} aria-label={`前往 ${item.year} 年 ${Number(item.month)} 月${item.concert ? "，演唱會" : ""}`} aria-current={i === index ? "step" : undefined}>
         <span className="timeline-year">{i === 0 || item.month === "01" ? item.year : "\u00a0"}</span>
         <span className="timeline-month">{item.english}<span className="timeline-month-number">{item.month}</span></span>
         <span className="timeline-mark">{item.concert ? <Ticket size={11} /> : item.kind === "birthday" ? <Heart size={10} /> : <span />}</span>
       </button>)}
     </nav>
-    <button className="slide-nav-arrow nav-next" onClick={() => lastMonth ? onReplay() : started ? onMonth(index + 1) : onStart()} aria-label={lastMonth ? "再播放一次我們的故事" : started ? "下一個月" : "開始回顧"}>{lastMonth ? <RotateCcw size={18} /> : <ArrowRight size={19} />}</button>
+    <button className="slide-nav-arrow nav-next" onClick={() => lastMonth ? onReplay() : onMonth(index + 1)} aria-label={lastMonth ? "再播放一次我們的故事" : "下一個月"}>{lastMonth ? <RotateCcw size={18} /> : <ArrowRight size={19} />}</button>
   </div>;
 }
 
 export default function MemoryPlayer() {
-  const [started, setStarted] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+  const started = pathname === "/memo";
+  const isHome = pathname === "/home";
+  const isIntro = pathname === "/intro";
   const [index, setIndex] = useState(0);
   const [direction, setDirection] = useState(1);
   const [answers, setAnswers] = useState<Record<string, number>>({});
@@ -130,23 +186,42 @@ export default function MemoryPlayer() {
   const timelineRef = useRef<HTMLElement>(null);
   const reduceMotion = useReducedMotion();
   const memory = memories[index];
-  const song = started ? memory.song : project.song;
+  const showPageBack = isIntro || (started && index === 0);
+  const theme = started ? memory : project;
+  const song = theme.song;
+  const colors = theme.colors;
+  const themeStyle = colors ? {
+    "--accent": colors.background,
+    "--secondary": colors.photoBackground,
+    "--ink": colors.text,
+    "--accent-ink": colors.bodyText ?? colors.text,
+  } as CSSProperties : undefined;
 
-  const playMusic = useCallback(() => {
+  const playMusic = useCallback((): Promise<boolean> => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio) return Promise.resolve(false);
     wantsMusic.current = true;
     audio.volume = 0.35;
     setAudioError(false);
-    audio.play().catch((error: DOMException) => {
+    return audio.play().then(() => !audio.paused).catch((error: DOMException) => {
       if (error.name !== "AbortError" && wantsMusic.current) setAudioError(true);
+      return false;
     });
   }, []);
+
+  useEffect(() => {
+    if (!isHome) return;
+    wantsMusic.current = false;
+    audioRef.current?.pause();
+    if (audioRef.current) audioRef.current.currentTime = 0;
+    setIndex(0);
+  }, [isHome]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     let active = true;
+    wantsMusic.current = started || wantsMusic.current;
     setAudioError(false);
     audio.volume = 0.35;
     audio.load();
@@ -154,52 +229,46 @@ export default function MemoryPlayer() {
       if (active && error.name !== "AbortError" && wantsMusic.current) setAudioError(true);
     });
     return () => { active = false; };
-  }, [song.src]);
+  }, [song.src, started]);
 
-  const toggleHomepageMusic = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) playMusic();
-    else { wantsMusic.current = false; audio.pause(); }
-  };
-
-  const start = useCallback(() => { setStarted(true); playMusic(); }, [playMusic]);
+  const enterIntro = useCallback(() => { router.push("/intro", { scroll: false }); }, [router]);
+  const start = useCallback(() => { playMusic(); router.push("/memo", { scroll: false }); }, [playMusic, router]);
   const goTo = useCallback((next: number) => {
     if (next < 0 || next >= memories.length) return;
     setDirection(next >= index ? 1 : -1);
     setIndex(next);
-    if (!started) start();
-  }, [index, started, start]);
+    playMusic();
+  }, [index, playMusic]);
   const home = () => {
     wantsMusic.current = false;
     audioRef.current?.pause();
     if (audioRef.current) audioRef.current.currentTime = 0;
-    setStarted(false);
-    setIndex(0);
+    router.push("/home", { scroll: false });
   };
   const restart = () => {
     setAnswers({}); setCollected({}); setLetterOpen(false); setDirection(-1);
-    setStarted(true); wantsMusic.current = true; setIndex(0);
+    wantsMusic.current = true; setIndex(0);
     if (audioRef.current) audioRef.current.currentTime = 0;
     playMusic();
   };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (!started) return;
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
       if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === "ArrowRight" || event.key === "PageDown") {
         event.preventDefault();
-        if (started) goTo(index + 1); else start();
+        goTo(index + 1);
       }
       if (event.key === "ArrowLeft" || event.key === "PageUp") {
         event.preventDefault();
-        if (started) goTo(index - 1);
+        goTo(index - 1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [started, goTo, index, start]);
+  }, [started, goTo, index]);
 
   useEffect(() => {
     if (!started) return;
@@ -208,10 +277,11 @@ export default function MemoryPlayer() {
     if (timeline && selected) timeline.scrollTo({ left: selected.offsetLeft - timeline.clientWidth / 2 + selected.clientWidth / 2, behavior: reduceMotion ? "instant" : "smooth" });
   }, [memory.id, started, reduceMotion]);
 
-  return <MotionConfig reducedMotion="user"><main className={`site-shell palette-${started ? memory.palette : project.palette}`}>
+  return <MotionConfig reducedMotion="user"><main className={`site-shell ${started ? "is-memo" : isIntro ? "is-intro" : "is-homepage"} palette-${theme.palette ?? "lime"}`} style={themeStyle}>
     <audio ref={audioRef} src={song.src} loop preload="metadata" onPlay={() => setMusicPlaying(true)} onPause={() => setMusicPlaying(false)} onError={() => setAudioError(true)} data-testid="audio" />
-    {started && <header className="slide-brand">
-      <button className="wordmark" onClick={home} aria-label="回到 NOV.17 封面"><Star fill="currentColor" strokeWidth={1.5} aria-hidden="true" /><span>{project.name}</span></button>
+    {(isIntro || started) && <header className="slide-brand">
+      {showPageBack && <button type="button" className="page-back" onClick={isIntro ? home : enterIntro} aria-label={isIntro ? "返回主頁" : "返回歡迎頁"} title={isIntro ? "返回主頁" : "返回歡迎頁"} data-testid="page-back"><ArrowLeft aria-hidden="true" /></button>}
+      {started && <button className="wordmark" onClick={home} aria-label="回到 NOV.17 封面"><Star fill="currentColor" strokeWidth={1.5} aria-hidden="true" /><span>{project.name}</span></button>}
     </header>}
     <section className="story-stage" aria-label="年度回顧投影片">
       <div className="slide-viewport" onTouchStart={(event) => {
@@ -226,12 +296,12 @@ export default function MemoryPlayer() {
         if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.3) goTo(index + (dx < 0 ? 1 : -1));
       }}>
         <AnimatePresence mode="wait" initial={false}>
-          <motion.div className="slide-page" key={started ? memory.id : "cover"} initial={{ opacity: 0, x: reduceMotion ? 0 : direction * 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: reduceMotion ? 0 : direction * -18 }} transition={{ duration: reduceMotion ? 0 : 0.2 }} data-testid={started ? "memory-card" : "cover"} data-month={started ? memory.id : undefined}>
-            {started ? <MemoryCard memory={memory} index={index} selected={answers[memory.id]} onAnswer={(answer) => setAnswers((previous) => ({ ...previous, [memory.id]: answer }))} collected={Boolean(collected[memory.id])} onCollect={() => setCollected((previous) => ({ ...previous, [memory.id]: !previous[memory.id] }))} letterOpen={letterOpen} onLetter={() => setLetterOpen((previous) => !previous)} /> : <Cover onStart={start} onToggleMusic={toggleHomepageMusic} musicPlaying={musicPlaying} />}
+          <motion.div className="slide-page" key={started ? memory.id : pathname} initial={{ opacity: 0, x: reduceMotion ? 0 : direction * 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: reduceMotion ? 0 : direction * -18 }} transition={{ duration: reduceMotion ? 0 : 0.2 }} data-testid={started ? "memory-card" : isIntro ? "intro" : "cover"} data-month={started ? memory.id : undefined}>
+            {started ? <MemoryCard memory={memory} index={index} selected={answers[memory.id]} onAnswer={(answer) => setAnswers((previous) => ({ ...previous, [memory.id]: answer }))} collected={Boolean(collected[memory.id])} onCollect={() => setCollected((previous) => ({ ...previous, [memory.id]: !previous[memory.id] }))} letterOpen={letterOpen} onLetter={() => setLetterOpen((previous) => !previous)} /> : isIntro ? <Intro onStart={start} /> : <Cover onEnter={enterIntro} onPlayMusic={playMusic} musicPlaying={musicPlaying} />}
           </motion.div>
         </AnimatePresence>
       </div>
-      <MonthNavigation started={started} index={index} timelineRef={timelineRef} onMonth={goTo} onStart={start} onReplay={restart} />
+      {started && <MonthNavigation index={index} timelineRef={timelineRef} onMonth={goTo} onReplay={restart} />}
     </section>
     {audioError && <span className="sr-only" role="status">背景音樂尚未播放。</span>}
   </main></MotionConfig>;

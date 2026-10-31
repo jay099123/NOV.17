@@ -7,12 +7,17 @@ const root = resolve(fileURLToPath(new URL("../out/", import.meta.url)));
 if (!existsSync(root)) { console.error("Run npm run build first."); process.exit(1); }
 const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".avif": "image/avif", ".svg": "image/svg+xml", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg", ".flac": "audio/flac", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 const port = Number(process.env.PORT || 3000);
+const hostname = process.env.NOV17_HOSTNAME || "127.0.0.1";
 createServer((request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url || "/", "http://localhost").pathname);
     let filename = resolve(root, `.${pathname}`);
     if (filename !== root && !filename.startsWith(`${root}${sep}`)) { response.writeHead(403).end(); return; }
-    if (existsSync(filename) && statSync(filename).isDirectory()) filename = resolve(filename, "index.html");
+    if (existsSync(filename) && statSync(filename).isDirectory()) {
+      const index = resolve(filename, "index.html");
+      filename = existsSync(index) || filename === root ? index : `${filename}.html`;
+    }
+    if (!existsSync(filename) && !extname(filename) && existsSync(`${filename}.html`)) filename = `${filename}.html`;
     if (!existsSync(filename)) { response.writeHead(404, { "Content-Type": "text/plain" }).end("Not found"); return; }
     const size = statSync(filename).size;
     const headers = { "Content-Type": mime[extname(filename)] || "application/octet-stream", "Accept-Ranges": "bytes" };
@@ -28,4 +33,4 @@ createServer((request, response) => {
       if (request.method === "HEAD") response.end(); else createReadStream(filename).pipe(response);
     }
   } catch { response.writeHead(400).end("Bad request"); }
-}).listen(port, "0.0.0.0", () => console.log(`NOV.17 ready at http://localhost:${port}`));
+}).listen(port, hostname, () => console.log(`NOV.17 ready at http://${hostname}:${port}`));

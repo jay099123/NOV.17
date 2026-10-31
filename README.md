@@ -13,20 +13,21 @@ cd /home/jay/code/Nov_17
 bash scripts/dev.sh
 ```
 
-開啟 **http://localhost:3000**。此腳本會使用專案的 Linux Node.js，避免誤用 Windows npm。若終端機已設定 Linux Node.js，也可以直接 `npm run dev`。
+開啟 **http://localhost:3000/home**。根網址 `/` 會自動導向 `/home`；歡迎頁使用 **http://localhost:3000/intro**，月份回顧使用 **http://localhost:3000/memo**。此腳本會使用專案的 Linux Node.js，避免誤用 Windows npm。若終端機已設定 Linux Node.js，也可以直接 `npm run dev`。
 
 新環境請安裝 Node.js 22+、執行 `npm ci`，並還原下文列出的私人內容檔與素材。
 
 ## Sample 體驗
 
-- 主頁以單欄置中排列名稱、生日祝福與透明去背合照。主頁有獨立的文字、照片與音源設定。
-- 每個月份卡片鋪滿瀏覽器視窗，左上角保留星星圖示與 NOV.17，點擊可回到主頁。
+- `/home` 主頁僅顯示名稱、生日祝福、照片與兩顆尖角黑星。第一次點擊只播放音樂並留在主頁，第二次才進入 `/intro`；載入期間快速連點也會記住第二次操作。主頁不顯示下一頁圖片按鈕、粉色圓形、音樂提示或月份列。
+- `/intro` 歡迎頁沿用主頁配色與黑色星星，三段歡迎文字依序彈入，最後才顯示播放按鈕，點擊後進入 `/memo`；左上角小箭頭可返回 `/home`。底部以紅色斜體數字、黑色描邊、波浪棋盤及弧線呈現 2025–2026，文字與播放鍵已上移以保留空間。減少動態模式直接顯示文字與按鈕。
+- `/memo` 顯示月份回顧，可直接開啟或重新整理。每個月份卡片鋪滿瀏覽器視窗，左上角保留星星圖示與 NOV.17，點擊會回到 `/home`。第一個月份 2025/11 的標誌前另有小箭頭，可返回 `/intro`。
 - 2025/11～2026/11 共 13 個月份，以卡片內底部的前後按鈕、月份時間軸、方向鍵／Page Up／Page Down 或手機左右滑動切換。選中的月份會高亮；窄螢幕會自動捲動時間軸到選中的月份。
 - 四個演唱會示意月份（12、2、6、10 月），搭配可收藏的雙人票券視覺。
 - 三道示意問答（1、5、8 月），可查看正解與回憶；允許略過，來回翻頁保留作答。
 - 兩個日常互動月份（4、9 月），點擊收藏後播放愛心與花形動畫。
 - 最後一個月份有生日信，點擊展開；重播時清除問答、收藏狀態與信件展開狀態。
-- 點擊主頁合照可播放／暫停主頁音樂；開始回顧後切換成月份歌曲。各月份切換時換歌並從頭開始，回到主頁會暫停。
+- 三個網址共用音訊元件與互動狀態：主頁進入歡迎頁時音樂持續播放，進入回顧後切換成月份歌曲；各月份切換時換歌並從頭開始，回到 `/home` 會暫停並重設播放位置，回顧重新從第一個月開始。瀏覽器上一頁／下一頁會同步切換對應畫面。
 - 畫面僅保留回顧內容、左上角識別與卡片內導覽，歌名、播放器、選單、月份目錄、頁尾與額外進度列已移除。
 - 手機與桌面都固定為一個視窗高度，長題目或生日信可在內容區內捲動；支援減少動態效果偏好。
 
@@ -34,7 +35,7 @@ bash scripts/dev.sh
 
 | 位置 | 用途 |
 | --- | --- |
-| `public/homepage/` | 主頁文字、透明去背合照、主頁音源及修改說明 |
+| `public/homepage/` | 主頁／歡迎頁文字、透明去背合照、主頁音源及修改說明 |
 | `public/memories/YYYY-MM/` | 每個月份的內容、照片與歌曲，全放在同一個月份資料夾 |
 | `data/*.local.*`、`data/private/` | 其他本機資料 |
 | `public/photos/`、`public/audio/` | 原本示意素材與產生器輸出，現行月份從各月資料夾載入 |
@@ -59,9 +60,9 @@ public/homepage/
 └── ASSETS.md                 # 示意去背圖的來源與提示詞
 ```
 
-修改 `content.json` 的 `name`、`greeting`、`startText`、`musicHint`、`musicPlayingText` 可換主頁文字；`photo.src` 與 `song.src` 分別指定照片和歌曲。主頁音源與每月歌曲是不同檔案，可獨立替換。
+修改 `content.json` 的 `name`、`greeting` 可換主頁文字；`intro.lines` 設定歡迎頁依序出場的三段文字，`intro.playLabel` 是歡迎頁播放按鈕的無障礙名稱。舊 `startText`、`startIcon`、`musicHint`、`musicPlayingText` 欄位目前不顯示。`photo.src` 與 `song.src` 分別指定照片和歌曲。主頁與歡迎頁共用音源，各月份歌曲可獨立替換。主頁的 `colors` 同時控制歡迎頁配色，可直接填 Tailwind 名稱或 HEX，設定方法與月份相同。
 
-主頁照片使用**已去背且有透明背景**的 PNG 或 WebP；換成自己的去背圖片後更新 `photo.src`、`photo.alt`。目前先使用專案內的虛構情侶示意照，原始圖片未覆寫。網站不會自動替新照片去背；JPG 改副檔名也不會產生透明背景。
+主頁照片使用**已去背且有透明背景**的 PNG 或 WebP；換成自己的去背圖片後更新 `photo.src`、`photo.alt`。目前載入本機的透明去背合照，原始照片另行保留。網站不會自動替新照片去背；JPG 改副檔名也不會產生透明背景。
 
 舊的 `public/memories/cover/` 僅保留歷史素材，已不再控制主頁。
 
@@ -89,7 +90,7 @@ public/memories/
 - `label`、`title`、`body`、`note` 是月份的回憶主題與文字。
 - `title` 保持兩段文字；JSON 文字換行使用 `\n`。JSON 不接受註解與尾端逗號。
 - `kind` 可為 `story`、`concert`、`quiz`、`little-things`、`birthday`。
-- `palette` 可為 `lime`、`pink`、`blue`、`orange`、`violet`，與月份故事主題分開設定。
+- `colors` 直接填本頁的 `background`、`photoBackground`、`text`，可用 Tailwind 名稱（如 `yellow-300`、`violet-200`、`gray-900`，不加 `bg-`／`text-`）或 HEX 色碼；可另外設定 `bodyText`，省略時跟隨 `text`。舊的五組 `palette` 仍可作為預設值，`colors` 優先。完整範例見 [color_setting.md](color_setting.md)。
 - `photos` 每一筆對應一張獨立照片，只設定 `src`、`alt`、`caption`。目前版型主要使用陣列的前一至兩張；照片會按原比例完整顯示，說明文字放在照片區外。
 - `song` 設定歌曲的 `src`、`title`、`artist`；每月有自己的音檔，目前依前次需求不顯示歌名。
 - `quiz.answer` 從 0 開始；`interaction` 設定收藏按鈕與揭曉文字，`letter` 設定生日信。
@@ -108,7 +109,7 @@ node scripts/generate-sample-audio.mjs
 
 ## 技術與驗證
 
-Next.js App Router、React、TypeScript、Tailwind CSS、Motion、Lucide。使用 static export，`npm run build` 產生 `out/`，`npm start` 提供正式版靜態預覽。
+Next.js App Router、React、TypeScript、Tailwind CSS、Motion、Lucide。使用 static export，`npm run build` 產生 `out/`，`npm start` 提供正式版靜態預覽，預設僅監聽本機 `127.0.0.1`；支援直接開啟 `/home`、`/intro`、`/memo`。
 
 ```bash
 npm run typecheck
@@ -122,6 +123,8 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
-測試涵蓋 13 個月份與不同歌曲、照片載入、問答、收藏、生日信、重播、鍵盤／滑動、視窗鋪滿、卡片內月份高亮，以及手機直橫向與桌面尺寸；也確認播放器和選單已移除。截圖與結果寫入被忽略的 `.qa/`。
+依使用者偏好，後續瀏覽器測試只使用 **桌面 1440 × 1080 CSS 像素**，所有 Playwright 頁面與 context 均固定此尺寸，不執行手機／平板模擬或多尺寸矩陣。一般／減少動態偏好也沿用同一尺寸。
 
-本次執行環境限制子程序與本機監聽，且無法下載瀏覽器；完整 Next.js 建置及瀏覽器測試的狀態請查看本機 `HANDOFF.md` 的最新驗證紀錄。`out/` 尚未重新產生，預覽新版請使用開發模式。
+測試先比對 `/home`、`/intro`、`/memo` 的 SSR 與 hydration 後畫面並捕捉 hydration 警告；再檢查主頁兩次點擊、歡迎頁播放鍵、返回按鈕、13 個月份與不同歌曲、照片載入、問答、收藏、生日信、重播、鍵盤、視窗鋪滿與卡片內月份高亮。截圖與結果寫入被忽略的 `.qa/`。
+
+功能版本已通過型別檢查與正式建置，`out/` 已更新。最新瀏覽器結果見 `.qa/browser-validation.json`；改用桌面單一尺寸前的六種尺寸報告與較早的配色驗證保留作歷史紀錄。詳細狀態請查看本機 `HANDOFF.md` 的最新紀錄。
