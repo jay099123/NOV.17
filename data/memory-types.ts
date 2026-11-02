@@ -8,12 +8,23 @@ export type PageColors = {
 };
 export type Photo = { src: string; alt: string; caption: string };
 export type Song = { title: string; artist: string; src: string };
+export type EventMemory = {
+  id: string;
+  cover: Pick<Photo, "src" | "alt">;
+  song: Song;
+  lines: string[];
+  photos?: Pick<Photo, "src" | "alt">[];
+};
+export type IntroContent = { lines: string[]; playLabel: string };
+export type StatsContent = { since: string; lines: [string, string, string]; playLabel: string };
 export type Homepage = {
   name: string;
   greeting: string;
   startText: string;
   startIcon?: string;
-  intro?: { lines: string[]; playLabel: string };
+  prelude?: IntroContent;
+  intro?: IntroContent;
+  stats: StatsContent;
   musicHint: string;
   musicPlayingText: string;
   palette?: Palette;
@@ -35,9 +46,10 @@ export type Memory = {
   palette?: Palette;
   colors?: PageColors;
   kind: "story" | "concert" | "quiz" | "little-things" | "birthday";
+  backgroundTexture?: "watercolor";
   photos: Photo[];
   song: Song;
-  concert?: { number: number; name: string; venue: string };
+  concert?: { number: number; name: string; venue: string; date?: string };
   quiz?: Question;
   interaction?: { action: string; reveal: string };
   letter?: string;

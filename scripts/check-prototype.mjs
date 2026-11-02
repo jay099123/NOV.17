@@ -1,297 +1,241 @@
-import { chromium, expect } from "@playwright/test";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { loadMemoryData } from "./load-memory-data.mjs";
+import { chromium, expect } from '@playwright/test';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { loadMemoryData } from './load-memory-data.mjs';
 
-const { memories, project } = loadMemoryData();
-const baseURL = process.env.NOV17_TEST_URL || "http://127.0.0.1:3000";
-// Project preference: browser checks only use this desktop viewport.
+const { events, project } = loadMemoryData();
+const baseURL = process.env.NOV17_TEST_URL || 'http://127.0.0.1:3000';
 const viewport = { width: 1440, height: 1080 };
-const homeURL = new URL("/home", baseURL).href;
-const introURL = new URL("/intro", baseURL).href;
-const memoURL = new URL("/memo", baseURL).href;
-const qa = new URL("../.qa/", import.meta.url);
+const url = route => new URL(route, baseURL).href;
+const qa = new URL('../.qa/', import.meta.url);
 mkdirSync(qa, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const errors = [];
-const hydrationChecks = [];
-const observeErrors = (page) => {
-  expect(page.viewportSize(), 'Desktop-only browser test policy').toEqual(viewport);
+const errors = [], hydrationChecks = [], durations = {};
+const blank = id => id === 'memo-5' || id === 'memo-7';
+const observe = page => {
+  expect(page.viewportSize()).toEqual(viewport);
   page.on('pageerror', error => errors.push(error.message));
-  // React also reports recoverable hydration mismatches through console.error.
   page.on('console', message => {
-    if (message.type() === 'error' && /hydrat|server rendered|did(?:n't| not) match|Minified React error #(?:418|423|425)/i.test(message.text())) {
-      errors.push(message.text());
-    }
+    if (message.type() === 'error' && /hydrat|server rendered|did(?:n't| not) match|Minified React error #(?:418|423|425)/i.test(message.text())) errors.push(message.text());
   });
 };
 const initialRender = page => page.evaluate(() => ({
-  className: document.querySelector('.site-shell').className,
-  monthBars: document.querySelectorAll('.slide-navigation').length,
-  month: document.querySelector('[data-testid="memory-card"]')?.getAttribute('data-month') || null,
-  cover: Boolean(document.querySelector('[data-testid="cover"]')),
-  intro: Boolean(document.querySelector('[data-testid="intro"]')),
-  song: document.querySelector('audio').getAttribute('src'),
+  shell: document.querySelector('.site-shell').className,
+  screen: document.querySelector('.slide-page').getAttribute('data-testid'),
+  event: document.querySelector('.slide-page').getAttribute('data-event'),
+  source: document.querySelector('audio').getAttribute('src'),
+  player: Boolean(document.querySelector('[data-testid="event-player"]')),
+  months: document.querySelectorAll('.month-timeline, .month-button').length,
 }));
-const expectedMonths = Array.from({ length: 13 }, (_, i) => {
-  const date = new Date(Date.UTC(2025, 10 + i, 1));
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-});
-const fullWindowSlide = async (page, label) => {
-  await expect(page.locator('.slide-page')).toHaveCSS('opacity', '1');
-  const geometry = await page.evaluate(() => {
-    const stage = document.querySelector('.story-stage').getBoundingClientRect();
-    const navigation = document.querySelector('.slide-navigation')?.getBoundingClientRect();
-    const homeTitle = document.querySelector('.homepage-title');
-    const introTitle = document.querySelector('.intro-title');
-    const brand = (document.querySelector('.wordmark') || homeTitle || introTitle).getBoundingClientRect();
-    return { isHome: Boolean(homeTitle), isIntro: Boolean(introTitle), width: innerWidth, height: innerHeight, stage: { x: stage.x, y: stage.y, width: stage.width, height: stage.height }, navigation: navigation ? { top: navigation.top, bottom: navigation.bottom, left: navigation.left, right: navigation.right } : null, brand: { top: brand.top, left: brand.left, right: brand.right, bottom: brand.bottom }, scrollWidth: document.documentElement.scrollWidth, scrollHeight: document.documentElement.scrollHeight };
-  });
-  expect(geometry.stage.x, `${label}: left edge`).toBeCloseTo(0, 0);
-  expect(geometry.stage.y, `${label}: top edge`).toBeCloseTo(0, 0);
-  expect(geometry.stage.width, `${label}: slide width`).toBeCloseTo(geometry.width, 0);
-  expect(geometry.stage.height, `${label}: slide height`).toBeCloseTo(geometry.height, 0);
-  if (geometry.isHome || geometry.isIntro) expect(geometry.navigation, `${label}: no landing-page month bar`).toBeNull();
-  else {
-    expect(geometry.navigation.top, `${label}: navigation at bottom`).toBeGreaterThan(geometry.height - 150);
-    expect(geometry.navigation.bottom).toBeLessThanOrEqual(geometry.height);
-    expect(geometry.navigation.left).toBeGreaterThanOrEqual(0);
-    expect(geometry.navigation.right).toBeLessThanOrEqual(geometry.width);
-  }
-  expect(geometry.brand.top).toBeGreaterThanOrEqual(0);
-  expect(geometry.brand.left).toBeGreaterThanOrEqual(0);
-  expect(geometry.brand.right).toBeLessThanOrEqual(geometry.width);
-  if (geometry.isHome || geometry.isIntro) expect((geometry.brand.left + geometry.brand.right) / 2).toBeCloseTo(geometry.width / 2, 0);
-  else expect(geometry.brand.bottom).toBeLessThan(100);
-  expect(geometry.scrollWidth, `${label}: no document horizontal scroll`).toBeLessThanOrEqual(geometry.width);
-  expect(geometry.scrollHeight, `${label}: no document vertical scroll`).toBeLessThanOrEqual(geometry.height);
+const waitEvent = async (page, id) => {
+  await expect(page).toHaveURL(url(`/${id}`));
+  await expect(page.getByTestId('event-page')).toHaveAttribute('data-event', id);
+  await expect(page.getByTestId('audio')).toHaveAttribute('src', events.find(event => event.id === id).song.src);
 };
-const waitPhotos = async (page) => {
-  await page.locator('[data-photo-src]').evaluateAll(async (elements) => {
-    await Promise.all([...new Set(elements.map((element) => element.dataset.photoSrc))].map(async (src) => { const image = new Image(); image.src = src; await image.decode(); }));
-  });
-  await expect.poll(() => page.locator('.photo-visual, .homepage-cutout').evaluateAll(elements => elements
-    .filter(element => element.getClientRects().length > 0)
-    .every(element => element instanceof HTMLImageElement && element.complete && element.naturalWidth > 0 && getComputedStyle(element).objectFit === 'contain'))).toBe(true);
-  expect(await page.locator('.photo-frame').evaluateAll(frames => frames
-    .filter(frame => frame.getClientRects().length > 0)
-    .every(frame => {
-      const image = frame.querySelector('.photo-window');
-      const caption = frame.querySelector('figcaption');
-      return image.offsetTop + image.offsetHeight <= caption.offsetTop + 1;
-    })), 'Photo captions must not cover the image').toBe(true);
-};
-const screenshot = async (page, name) => { await page.waitForTimeout(250); await waitPhotos(page); await page.screenshot({ path: new URL(name, qa).pathname, fullPage: true }); };
-const enterIntroFromHome = async (page) => {
-  await page.getByTestId('homepage-music').click();
-  await expect(page).toHaveURL(homeURL);
-  await expect.poll(() => page.getByTestId('audio').evaluate(audio => !audio.paused && audio.currentTime > .1)).toBe(true);
-  await page.getByTestId('homepage-music').click();
-  await expect(page).toHaveURL(introURL);
-};
-const enterMemoFromHome = async (page) => {
-  await enterIntroFromHome(page);
-  await expect(page.getByTestId('intro')).toBeVisible();
-  await expect(page.getByRole('img', { name: '2025–2026' })).toBeVisible();
-  await expect(page.getByTestId('start')).toBeVisible();
-  await fullWindowSlide(page, 'intro');
-  await page.getByTestId('start').click();
-  await expect(page).toHaveURL(memoURL);
-};
+const setRange = async (locator, value) => locator.evaluate((input, next) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, String(next));
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}, value);
+const humanTime = seconds => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds)) % 60).padStart(2, '0')}`;
 
 try {
-  const serverContext = await browser.newContext({ javaScriptEnabled: false, viewport });
-  const serverPage = await serverContext.newPage();
-  expect(serverPage.viewportSize()).toEqual(viewport);
-  for (const [url, mode] of [[homeURL, 'home'], [introURL, 'intro'], [memoURL, 'memo']]) {
-    const isHome = mode === 'home';
-    const isMemo = mode === 'memo';
-    const response = await serverPage.goto(url);
-    expect(response.status(), `${url}: initial HTML`).toBe(200);
-    const server = await initialRender(serverPage);
-    expect(server.className).toContain(isHome ? 'is-homepage' : isMemo ? 'is-memo' : 'is-intro');
-    expect(server.monthBars).toBe(isMemo ? 1 : 0);
-    expect(server.cover).toBe(isHome);
-    expect(server.intro).toBe(mode === 'intro');
-    expect(server.month).toBe(isMemo ? memories[0].id : null);
-    expect(server.song).toBe(isMemo ? memories[0].song.src : project.song.src);
-    if (isHome) await expect(serverPage.getByTestId('start')).toHaveCount(0);
+  expect(events.map(event => event.id)).toEqual([...Array.from({ length: 9 }, (_, i) => `memo-${i + 1}`), 'memo-99']);
+  for (const event of events) {
+    expect(Array.isArray(event.lines) && event.lines.every(line => typeof line === 'string')).toBe(true);
+    expect(existsSync(new URL(`../public${event.cover.src}`, import.meta.url))).toBe(true);
+    expect(existsSync(new URL(`../public${event.song.src}`, import.meta.url))).toBe(true);
+    for (const photo of event.photos ?? []) expect(existsSync(new URL(`../public${photo.src}`, import.meta.url))).toBe(true);
+  }
+  const routes = ['/home', '/prelude', '/intro', '/stats', ...events.map(event => `/${event.id}`)];
+  const serverContext = await browser.newContext({ viewport, javaScriptEnabled: false });
+  const server = await serverContext.newPage();
+  for (const route of routes) {
+    expect((await server.goto(url(route))).status()).toBe(200);
+    const snapshot = await initialRender(server);
+    expect(snapshot.months).toBe(0);
     for (const reducedMotion of ['no-preference', 'reduce']) {
-      const hydratedPage = await browser.newPage({ viewport, reducedMotion });
-      observeErrors(hydratedPage);
-      await hydratedPage.goto(url, { waitUntil: 'networkidle' });
-      if (isHome) await expect(hydratedPage.getByTestId('start')).toHaveCount(0);
-      expect(await initialRender(hydratedPage), `${url}: SSR matches hydrated state (${reducedMotion})`).toEqual(server);
-      // The following event confirms hydration completed, without comparing after navigation.
-      if (isHome) {
-        await enterIntroFromHome(hydratedPage);
-      } else if (isMemo) {
-        await hydratedPage.locator('.month-button').first().click();
-      } else {
-        await hydratedPage.getByTestId('start').click();
-        await expect(hydratedPage).toHaveURL(memoURL);
+      const page = await browser.newPage({ viewport, reducedMotion });
+      observe(page);
+      await page.goto(url(route), { waitUntil: 'networkidle' });
+      expect(await initialRender(page)).toEqual(snapshot);
+      if (route.startsWith('/memo-') && !blank(route.slice(1))) {
+        if (await page.getByTestId('audio').evaluate(audio => audio.paused)) await page.getByTestId('event-play-toggle').click();
+        await expect.poll(() => page.getByTestId('audio').evaluate(audio => !audio.paused)).toBe(true);
       }
-      await expect.poll(() => hydratedPage.getByTestId('audio').evaluate(element => !element.paused)).toBe(true);
-      hydrationChecks.push({ path: new URL(url).pathname, reducedMotion, matched: true });
-      await hydratedPage.close();
+      hydrationChecks.push({ route, reducedMotion, matched: true });
+      await page.close();
     }
   }
   await serverContext.close();
-  expect(memories.map((memory) => memory.id)).toEqual(expectedMonths);
-  expect(new Set(memories.map((memory) => memory.song.src)).size).toBe(13);
-  for (const photo of [project.photo, ...memories.flatMap(memory => memory.photos)]) {
-    expect(photo).not.toHaveProperty('tile');
-  }
+
   const page = await browser.newPage({ viewport });
-  observeErrors(page);
-  await page.goto(baseURL);
-  await expect(page).toHaveURL(homeURL);
-  await page.evaluate(() => document.fonts.ready);
-  await expect(page).toHaveTitle(/NOV\.17/);
-  await expect(page.getByTestId("start")).toHaveCount(0);
-  await expect(page.locator('.homepage-actions, .homepage-music-hint')).toHaveCount(0);
-  await expect(page.getByTestId('slide-navigation')).toHaveCount(0);
-  await expect(page.locator('.month-timeline')).toHaveCount(0);
-  await expect(page.locator('.wordmark')).toHaveCount(0);
+  observe(page);
+  await page.addInitScript(() => {
+    window.__entrances = [];
+    document.addEventListener('animationend', event => {
+      if (event.animationName !== 'intro-pop-in' || !(event.target instanceof HTMLElement)) return;
+      const target = event.target;
+      if (!target.matches('.event-line,.stats-line,.stats-continue')) return;
+      window.__entrances.push({ kind: target.className, event: target.closest('[data-event]')?.getAttribute('data-event'), index: [...target.parentElement.children].indexOf(target) });
+    });
+  });
+  await page.goto(url('/'));
+  await expect(page).toHaveURL(url('/home'));
   await expect(page.locator('.homepage-title')).toHaveText(project.name);
-  await expect(page.locator('.homepage-greeting')).toHaveText(project.greeting);
-  await expect(page.locator('.homepage-cutout')).toHaveAttribute('src', project.photo.src);
-  await expect(page.locator('.music-player, .header-nav, .chapter-controls, .site-footer, .stage-ribbon, .info-modal, .track-title, audio[controls]')).toHaveCount(0);
-  await fullWindowSlide(page, 'desktop cover');
-  await screenshot(page, "desktop-cover.png");
-
-  const homeAudio = page.getByTestId("audio");
-  const audioNode = await homeAudio.elementHandle();
-  await expect(homeAudio).toHaveAttribute('src', project.song.src);
-  expect(await homeAudio.evaluate(element => element.paused)).toBe(true);
-  await page.locator('.homepage-title').click();
-  await expect(page).toHaveURL(homeURL);
-  await expect.poll(() => homeAudio.evaluate(element => !element.paused && element.currentTime > .1)).toBe(true);
-  await expect(page.getByTestId('homepage-music')).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('intro')).toHaveCount(0);
-  await page.locator('.homepage-title').click();
-  await expect(page).toHaveURL(introURL);
-  expect(await audioNode.evaluate(element => element === document.querySelector('audio')), 'shared audio survives intro navigation').toBe(true);
-  await expect(homeAudio).toHaveAttribute('src', project.song.src);
-  await expect(page.locator('.homepage-next')).toHaveCount(0);
-  if (project.intro) await expect(page.locator('.intro-line')).toHaveText(project.intro.lines);
+  const homeBackground = await page.locator('main').evaluate(element => getComputedStyle(element).backgroundColor);
+  const audio = page.getByTestId('audio');
+  const node = await audio.elementHandle();
+  await page.getByTestId('homepage-music').click();
+  await expect(page).toHaveURL(url('/home'));
+  await expect.poll(() => audio.evaluate(element => !element.paused && element.currentTime > .1)).toBe(true);
+  const landingTime = await audio.evaluate(element => {
+    element.dataset.loads = '0';
+    element.addEventListener('loadstart', () => { element.dataset.loads = String(Number(element.dataset.loads) + 1); });
+    return element.currentTime;
+  });
+  await page.getByTestId('homepage-music').click();
+  await expect(page).toHaveURL(url('/prelude'));
+  await expect(page.locator('.intro-line')).toHaveText(project.prelude.lines);
+  await page.getByTestId('prelude-continue').click();
+  await expect(page).toHaveURL(url('/intro'));
+  await expect(page.locator('.intro-line')).toHaveText(project.intro.lines);
   await expect(page.getByRole('img', { name: '2025–2026' })).toBeVisible();
-  await expect(page.getByTestId('start')).toBeVisible();
-  await fullWindowSlide(page, 'desktop intro');
-  await screenshot(page, 'desktop-intro.png');
-  await expect(page.getByTestId('page-back')).toHaveAccessibleName('返回主頁');
-  await page.getByTestId('page-back').click();
-  await expect(page).toHaveURL(homeURL);
-  await expect(page.getByTestId('homepage-music')).toBeVisible();
-  await expect.poll(() => homeAudio.evaluate(element => element.paused)).toBe(true);
-  await enterIntroFromHome(page);
-  await page.getByTestId("start").click();
-  await expect(page).toHaveURL(memoURL);
-  expect(await audioNode.evaluate(element => element === document.querySelector('audio')), 'shared audio survives route navigation').toBe(true);
-  await expect(page.locator('.story-stage > .slide-navigation .month-button')).toHaveCount(13);
-  await expect(page.locator('.wordmark .lucide-star')).toHaveCount(1);
-  await expect(homeAudio).toHaveAttribute('src', memories[0].song.src);
-  const card = page.getByTestId("memory-card");
-  const audio = page.getByTestId("audio");
-  await expect(card).toHaveAttribute("data-month", "2025-11");
-  await expect.poll(() => audio.evaluate((element) => !element.paused && element.currentTime > .1)).toBe(true);
-  await expect(page.getByTestId('page-back')).toHaveAccessibleName('返回歡迎頁');
-  await page.getByTestId('page-back').click();
-  await expect(page).toHaveURL(introURL);
-  await expect(page.getByTestId('intro')).toBeVisible();
-  await expect(homeAudio).toHaveAttribute('src', project.song.src);
-  expect(await audioNode.evaluate(element => element === document.querySelector('audio'))).toBe(true);
   await page.getByTestId('start').click();
-  await expect(page).toHaveURL(memoURL);
-  await expect(card).toHaveAttribute('data-month', memories[0].id);
-  await screenshot(page, "desktop-november.png");
-  const playedSources = new Set();
-
-  for (const memory of memories) {
-    await page.locator(`.month-timeline button[data-month="${memory.id}"]`).click();
-    await expect(card).toHaveAttribute("data-month", memory.id);
-    await expect(page.getByTestId('page-back')).toHaveCount(memory.id === memories[0].id ? 1 : 0);
-    await expect(audio).toHaveAttribute("src", memory.song.src);
-    await expect.poll(() => audio.evaluate((element) => !element.paused && element.currentTime > .1)).toBe(true);
-    await expect.poll(() => audio.evaluate((element) => element.duration)).toBeGreaterThan(5);
-    playedSources.add(await audio.getAttribute("src"));
-    await expect(page.locator('.month-button.active')).toHaveCount(1);
-    await expect(page.locator('.month-button.active')).toHaveAttribute('data-month', memory.id);
-    await expect(page.locator('.month-button.active')).toHaveAttribute('aria-current', 'step');
-    await waitPhotos(page);
-    await fullWindowSlide(page, `desktop ${memory.id}`);
-    if (memory.quiz) {
-      const wrongAnswer = (memory.quiz.answer + 1) % memory.quiz.options.length;
-      await page.getByTestId(`option-${wrongAnswer}`).click();
-      await expect(page.locator(".quiz-reveal")).toBeVisible();
-      await expect(page.locator(".quiz-option.is-correct")).toHaveCount(1);
-      await expect(page.locator(".quiz-option.is-wrong")).toHaveCount(1);
-      await expect(page.locator(".quiz-option:disabled")).toHaveCount(memory.quiz.options.length);
-      if (memory.id === "2026-01") await screenshot(page, "desktop-quiz.png");
-    }
-    if (memory.interaction) {
-      await page.getByTestId("collect-moment").click();
-      await expect(page.locator(".moment-reveal")).toBeVisible();
-      await expect(page.getByTestId("collect-moment")).toHaveAttribute("aria-pressed", "true");
-    }
-    if (memory.concert?.number === 1) await screenshot(page, "desktop-concert.png");
-    if (memory.letter) {
-      await page.getByTestId("open-letter").click();
-      await expect(page.locator(".letter-content")).toBeVisible();
-      await screenshot(page, "desktop-birthday.png");
-    }
-  }
-  expect(playedSources.size).toBe(13);
-
-  await page.getByRole('button', { name: '回到 NOV.17 封面' }).click();
-  await expect(page).toHaveURL(homeURL);
-  await expect(page.getByTestId('homepage-music')).toBeVisible();
-  await expect(page.getByTestId('start')).toHaveCount(0);
-  await expect(page.getByTestId('slide-navigation')).toHaveCount(0);
-  await expect(homeAudio).toHaveAttribute('src', project.song.src);
-  await expect.poll(() => homeAudio.evaluate(element => element.paused)).toBe(true);
-  expect(await audioNode.evaluate(element => element === document.querySelector('audio'))).toBe(true);
+  await expect(page).toHaveURL(url('/stats'));
+  await expect(page.getByTestId('stats-transition')).toHaveCount(0);
+  await expect(page.getByTestId('stats-continue')).toHaveCSS('opacity', '1');
+  const clock = await page.evaluate(since => ({ expected: Math.floor((Date.now() - Date.parse(since)) / 1000), actual: Number(document.querySelector('[data-testid="stats-seconds"]').textContent.replace(/[,\s]/g, '')) }), project.stats.since);
+  expect(Math.abs(clock.actual - clock.expected)).toBeLessThanOrEqual(1);
+  expect(await audio.evaluate(element => Number(element.dataset.loads))).toBe(0);
+  expect(await audio.evaluate(element => element.currentTime)).toBeGreaterThan(landingTime);
+  expect(await node.evaluate(element => element === document.querySelector('audio'))).toBe(true);
+  await page.getByTestId('stats-continue').click();
+  await expect(page.getByTestId('stats-transition')).toBeVisible();
+  await expect(page).toHaveURL(url('/stats'));
+  await expect(audio).toHaveAttribute('src', project.song.src);
+  await waitEvent(page, 'memo-1');
+  expect(await node.evaluate(element => element === document.querySelector('audio'))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__entrances.filter(event => event.kind === 'event-line' && event.event === 'memo-1').length), { timeout: Math.max(12000, events[0].lines.length * 800 + 2000) }).toBe(events[0].lines.length);
+  expect(await page.evaluate(() => window.__entrances.filter(event => event.kind === 'event-line' && event.event === 'memo-1').map(event => event.index))).toEqual(events[0].lines.map((_, index) => index));
+  await expect(page.locator('.event-line')).toHaveText(events[0].lines);
+  for (const line of await page.locator('.event-line').all()) await expect(line).toHaveCSS('opacity', '1');
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: new URL('desktop-event-memo-1.png', qa).pathname });
+  await page.getByTestId('event-play-toggle').click();
+  await expect.poll(() => audio.evaluate(element => element.paused)).toBe(true);
+  const pausedTime = await audio.evaluate(element => element.currentTime);
+  await page.waitForTimeout(400);
+  expect(await audio.evaluate(element => element.currentTime)).toBeCloseTo(pausedTime, 1);
+  const duration = await audio.evaluate(element => element.duration);
+  await setRange(page.getByRole('slider', { name: '播放進度' }), duration * .3);
+  await expect.poll(() => audio.evaluate(element => element.currentTime)).toBeCloseTo(duration * .3, 0);
+  const seekedTime = await audio.evaluate(element => element.currentTime);
+  await expect(page.getByTestId('elapsed-time')).toHaveText(humanTime(seekedTime));
+  await expect(page.getByTestId('remaining-time')).toHaveText(`-${humanTime(duration - seekedTime)}`);
+  await setRange(page.getByRole('slider', { name: '網站音量' }), .62);
+  await expect.poll(() => audio.evaluate(element => element.volume)).toBeCloseTo(.62);
+  await expect(page.getByRole('slider', { name: '網站音量' })).toHaveAttribute('aria-valuetext', '62%');
+  await page.getByRole('slider', { name: '網站音量' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page).toHaveURL(url('/memo-1'));
+  await expect.poll(() => audio.evaluate(element => element.volume)).toBeCloseTo(.63);
+  await page.getByRole('button', { name: '靜音音樂', exact: true }).click();
+  await expect.poll(() => audio.evaluate(element => element.muted)).toBe(true);
+  await page.getByRole('button', { name: '取消靜音', exact: true }).click();
+  await expect.poll(() => audio.evaluate(element => element.muted)).toBe(false);
+  await page.getByTestId('event-play-toggle').click();
+  await expect.poll(() => audio.evaluate(element => !element.paused)).toBe(true);
+  expect(await page.evaluate(() => window.__entrances.filter(event => event.kind === 'event-line' && event.event === 'memo-1').length)).toBe(events[0].lines.length);
+  await page.getByRole('button', { name: '下一個事件', exact: true }).click();
+  await waitEvent(page, 'memo-2');
+  await expect.poll(() => audio.evaluate(element => element.volume)).toBeCloseTo(.63);
+  expect(await audio.evaluate(element => element.currentTime)).toBeLessThan(2);
   await page.goBack();
-  await expect(page).toHaveURL(memoURL);
-  await expect(card).toHaveAttribute('data-month', '2025-11');
-  await page.locator('.month-timeline button[data-month="2026-01"]').click();
-  await expect(page.locator(".quiz-reveal")).toBeVisible();
-  await page.locator('.month-timeline button[data-month="2026-11"]').click();
-  await expect(page.locator(".letter-content")).toBeVisible();
-  await page.getByRole("button", { name: "再播放一次我們的故事" }).click();
-  await expect(card).toHaveAttribute("data-month", "2025-11");
-  await page.locator('.month-timeline button[data-month="2026-01"]').click();
-  await expect(page.locator(".quiz-reveal")).toHaveCount(0);
-  await page.keyboard.press("ArrowLeft");
-  await expect(card).toHaveAttribute("data-month", "2025-12");
+  await waitEvent(page, 'memo-1');
+  await expect.poll(() => audio.evaluate(element => element.volume)).toBeCloseTo(.63);
 
-  await page.keyboard.press("PageDown");
-  await expect(card).toHaveAttribute("data-month", "2026-01");
+  const sequence = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+  observe(sequence);
+  await sequence.goto(url('/memo-1'));
+  if (await sequence.getByTestId('audio').evaluate(audio => audio.paused)) await sequence.getByTestId('event-play-toggle').click();
+  for (const [index, event] of events.entries()) {
+    await waitEvent(sequence, event.id);
+    await expect.poll(() => sequence.getByTestId('audio').evaluate(audio => Number.isFinite(audio.duration) && audio.duration > 0)).toBe(true);
+    durations[event.id] = await sequence.getByTestId('audio').evaluate(audio => audio.duration);
+    expect(await sequence.locator('main').evaluate(element => getComputedStyle(element).backgroundColor)).toBe(homeBackground);
+    await expect(sequence.locator('.month-timeline,.month-button,.memory-grid')).toHaveCount(0);
+    await expect(sequence.getByTestId('dev-audio-mute')).toHaveCount(0);
+    if (blank(event.id)) {
+      await expect(sequence.getByTestId('event-player')).toHaveCount(0);
+      expect(await sequence.locator('body').innerText()).toBe('');
+      if (event.id === 'memo-5') await sequence.screenshot({ path: new URL('desktop-event-blank.png', qa).pathname });
+    } else {
+      await expect(sequence.getByTestId('event-cover')).toHaveAttribute('src', event.cover.src);
+      await expect.poll(() => sequence.getByTestId('event-cover').evaluate(image => image.complete && image.naturalWidth > 0)).toBe(true);
+      await expect(sequence.locator('.event-track-title')).toHaveText(event.song.title);
+      await expect(sequence.locator('.event-track-artist')).toHaveText(event.song.artist);
+      await expect(sequence.locator('.event-line')).toHaveText(event.lines);
+      const photos = event.photos ?? [];
+      await expect(sequence.locator('.event-snapshot img')).toHaveCount(photos.length);
+      for (const [photoIndex, photo] of photos.entries()) {
+        const image = sequence.locator('.event-snapshot img').nth(photoIndex);
+        await expect(image).toHaveAttribute('src', photo.src);
+        await expect.poll(() => image.evaluate(element => element.complete && element.naturalWidth > 0)).toBe(true);
+        await expect(image).toHaveCSS('object-fit', 'contain');
+      }
+      await expect(sequence.locator('.event-ambient')).toHaveCount(event.id === 'memo-1' ? 1 : 0);
+      await expect(sequence.getByRole('slider', { name: '播放進度' })).toHaveAttribute('max', String(durations[event.id]));
+      expect(await sequence.getByTestId('audio').evaluate(audio => audio.currentTime)).toBeLessThan(2);
+    }
+    if (index < events.length - 1) await sequence.getByRole('button', { name: '下一個事件', exact: true }).click();
+  }
+  await sequence.getByRole('button', { name: '從第一個事件重新播放' }).click();
+  await waitEvent(sequence, 'memo-1');
+  await sequence.getByRole('button', { name: '下一個事件', exact: true }).click();
+  await waitEvent(sequence, 'memo-2');
+  await sequence.goBack();
+  await waitEvent(sequence, 'memo-1');
+  expect(await sequence.getByTestId('audio').evaluate(audio => audio.currentTime)).toBeLessThan(2);
+  await sequence.keyboard.press('PageDown');
+  await waitEvent(sequence, 'memo-2');
+  await sequence.keyboard.press('PageUp');
+  await waitEvent(sequence, 'memo-1');
+  await sequence.getByRole('button', { name: '返回統計頁' }).click();
+  await expect(sequence).toHaveURL(url('/stats'));
+  await expect(sequence.getByTestId('stats-transition')).toHaveCount(0);
+  await sequence.goto(url('/memo'));
+  await waitEvent(sequence, 'memo-1');
+  await sequence.reload();
+  await waitEvent(sequence, 'memo-1');
+  expect((await sequence.goto(url('/memo-11'))).status()).toBe(404);
+  expect(await sequence.getByTestId('event-player').count()).toBe(0);
+  await sequence.close();
 
-  const direct = await browser.newPage({ viewport });
-  observeErrors(direct);
-  await direct.goto(memoURL);
-  await expect(direct.getByTestId('memory-card')).toHaveAttribute('data-month', '2025-11');
-  await expect(direct.locator('.month-button')).toHaveCount(13);
-  await expect(direct.locator('.homepage-title')).toHaveCount(0);
-  await direct.reload();
-  await expect(direct.getByTestId('memory-card')).toHaveAttribute('data-month', '2025-11');
-  await direct.locator('.month-button[data-month="2025-12"]').click();
-  await expect.poll(() => direct.getByTestId('audio').evaluate(element => !element.paused && element.currentTime > .1)).toBe(true);
-  await direct.getByRole('button', { name: '回到 NOV.17 封面' }).click();
-  await expect(direct).toHaveURL(homeURL);
-  await expect(direct.getByTestId('homepage-music')).toBeVisible();
-  await expect(direct.getByTestId('start')).toHaveCount(0);
-  await expect(direct.getByTestId('slide-navigation')).toHaveCount(0);
-  await enterMemoFromHome(direct);
-  await direct.getByRole('button', { name: '回到 NOV.17 封面' }).click();
-  await expect(direct).toHaveURL(homeURL);
-  await expect(direct.getByTestId('homepage-music')).toBeVisible();
-  await expect(direct.getByTestId('start')).toHaveCount(0);
-  await direct.close();
+  const failed = await browser.newPage({ viewport, reducedMotion: 'reduce' });
+  observe(failed);
+  await failed.route(url(events[1].song.src), route => route.fulfill({ status: 404, body: 'missing audio' }));
+  await failed.goto(url('/memo-2'));
+  await expect(failed.locator('.event-audio-error')).toBeVisible();
+  await expect(failed.getByRole('slider', { name: '播放進度' })).toBeDisabled();
+  await expect(failed.getByTestId('elapsed-time')).toHaveText('0:00');
+  await failed.getByRole('button', { name: '下一個事件', exact: true }).click();
+  await waitEvent(failed, 'memo-3');
+  await expect.poll(() => failed.getByTestId('audio').evaluate(audio => audio.duration > 0 && !audio.paused)).toBe(true);
+  await expect(failed.locator('.event-audio-error')).toHaveCount(0);
+  await failed.close();
 
-  expect(errors, "Browser runtime errors").toEqual([]);
-  writeFileSync(new URL("browser-validation.json", qa), JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), desktopOnly: true, hydrationChecks, routes: ['/home', '/intro', '/memo'], rootRedirect: true, homepageMonthBar: false, homepageNextRemoved: true, homeTwoClicks: true, introYears: true, introPlayButton: true, pageBackNavigation: true, sharedAudio: true, browserHistory: true, directMemoReload: true, months: 13, distinctSongs: playedSources.size, viewports: [[viewport.width, viewport.height]], errors }, null, 2));
-  console.log("PASS: desktop 1440x1080; first click plays music, second enters /intro; 2025–2026 footer; animated welcome and play button; /memo with shared audio and state; browser history; direct memo reload; 13 months and songs; photos; quiz/reset; collection; birthday letter; keyboard; full-window slides.");
-} finally {
-  await browser.close();
-}
+  const cancel = await browser.newPage({ viewport });
+  observe(cancel);
+  await cancel.goto(url('/stats'));
+  await cancel.getByTestId('stats-continue').click();
+  await expect(cancel.getByTestId('stats-transition')).toBeVisible();
+  await cancel.getByTestId('page-back').click();
+  await expect(cancel).toHaveURL(url('/intro'));
+  await cancel.waitForTimeout(2600);
+  await expect(cancel).toHaveURL(url('/intro'));
+  await cancel.close();
+  expect(errors).toEqual([]);
+  const result = { ok: true, checkedAt: new Date().toISOString(), viewport, routes, hydrationChecks, events: events.length, blankEvents: ['memo-5','memo-7'], durations, nativeAudioProgress: true, seekAndPlayback: true, websiteVolume: true, systemVolumeAccess: false, perEventReset: true, sequentialLines: true, statsTransition: true, legacyMemoRedirect: true, missingAudioRecovery: true, errors };
+  writeFileSync(new URL('browser-validation.json', qa), JSON.stringify(result, null, 2));
+  console.log('PASS: 1440x1080; landing flow and shared audio; 10 event routes; blank 5/7; actual durations/progress; play/pause/seek/volume; sequential text; reset on navigation; history/redirect; missing audio recovery; no hydration errors.');
+} finally { await browser.close(); }

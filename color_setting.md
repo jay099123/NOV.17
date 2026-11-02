@@ -56,6 +56,8 @@ JSON 填 `yellow-300` 即可，不要加 `bg-` 或 `text-` 前綴。`yellow` 缺
 
 ## 舊色票與優先順序
 
+月份可在 JSON 最外層加入 `"backgroundTexture": "watercolor"`，為左側文字區加上水彩暈染與細微紙紋。底色仍由 `colors.background` 控制；移除此欄位即可恢復純色。紋理樣式在 `app/globals.css` 的 `.memory-copy[data-texture="watercolor"]`，共用紋理檔為 `public/textures/watercolor.svg`。
+
 `colors` 會覆蓋舊的 `palette`，使用 `colors` 時可移除 `palette`。只填 `colors` 就能自訂配色。
 
 舊資料只填 `palette` 仍可使用 `lime`、`pink`、`blue`、`orange`、`violet`；兩者都省略時使用 `lime` 預設色。若保留 `palette`，它仍需填合法名稱。
@@ -68,7 +70,8 @@ JSON 填 `yellow-300` 即可，不要加 `bg-` 或 `text-` 前綴。`yellow` 缺
 
 | 想修改的地方 | 搜尋 selector／變數 |
 | --- | --- |
-| 照片框、票券底色 | `:root` 裡的 `--paper` |
+| 票券底色與文字 | `:root` 裡的 `--paper`、`.concert-ticket` 的固定深色字 |
+| 照片說明 | `.photo-frame figcaption`，白字與暗色漸層疊在滿版照片底部；照片沒有白框 |
 | 主頁尖角星星 | `.homepage-spark` 固定為純黑 `#000`；輪廓在 `components/memory-player.tsx` 的 `HomepageStar` |
 | 歡迎頁播放按鈕 | `.intro-play`（黑色底、圖示使用主頁背景色） |
 | 左上角返回按鈕 | `.page-back`、`.page-back:hover`；位置與間距在 `.slide-brand` |

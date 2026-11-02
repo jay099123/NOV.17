@@ -1,20 +1,17 @@
 // Public loader only. Personal content belongs in the Git-ignored public/homepage/ and public/memories/.
 import tailwindColors from "tailwindcss/colors";
 import homepage from "../public/homepage/content.json";
-import november2025 from "../public/memories/2025-11/content.json";
-import december2025 from "../public/memories/2025-12/content.json";
-import january2026 from "../public/memories/2026-01/content.json";
-import february2026 from "../public/memories/2026-02/content.json";
-import march2026 from "../public/memories/2026-03/content.json";
-import april2026 from "../public/memories/2026-04/content.json";
-import may2026 from "../public/memories/2026-05/content.json";
-import june2026 from "../public/memories/2026-06/content.json";
-import july2026 from "../public/memories/2026-07/content.json";
-import august2026 from "../public/memories/2026-08/content.json";
-import september2026 from "../public/memories/2026-09/content.json";
-import october2026 from "../public/memories/2026-10/content.json";
-import november2026 from "../public/memories/2026-11/content.json";
-import type { Homepage, Memory, PageColors, Palette } from "./memory-types";
+import event1 from "../public/memories/memo-1/content.json";
+import event2 from "../public/memories/memo-2/content.json";
+import event3 from "../public/memories/memo-3/content.json";
+import event4 from "../public/memories/memo-4/content.json";
+import event5 from "../public/memories/memo-5/content.json";
+import event6 from "../public/memories/memo-6/content.json";
+import event7 from "../public/memories/memo-7/content.json";
+import event8 from "../public/memories/memo-8/content.json";
+import event9 from "../public/memories/memo-9/content.json";
+import event99 from "../public/memories/memo-99/content.json";
+import type { EventMemory, Homepage, PageColors, Palette, StatsContent } from "./memory-types";
 
 const palettes: Palette[] = ["lime", "pink", "blue", "orange", "violet"];
 const namedColors: Record<string, string> = Object.fromEntries(
@@ -48,20 +45,49 @@ function readTheme(content: { palette?: unknown; colors?: unknown }, filename: s
   } };
 }
 
-export const project: Homepage = { ...homepage, ...readTheme(homepage, "public/homepage/content.json") };
-const kinds: Memory["kind"][] = ["story", "concert", "quiz", "little-things", "birthday"];
-const months = [november2025, december2025, january2026, february2026, march2026, april2026, may2026, june2026, july2026, august2026, september2026, october2026, november2026];
-
-export const memories: Memory[] = months.map((content, index): Memory => {
-  const date = new Date(Date.UTC(2025, 10 + index, 1));
-  const id = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
-  const filename = `public/memories/${id}/content.json`;
-  if (content.id !== id) throw new Error(`${filename}: id must match the month folder.`);
-  if (!Array.isArray(content.title) || content.title.length !== 2 || content.title.some(line => typeof line !== "string")) {
-    throw new Error(`${filename}: title must contain exactly two text lines.`);
+function readStats(content: unknown): StatsContent {
+  const filename = "public/homepage/content.json: stats";
+  if (!content || typeof content !== "object") throw new Error(`${filename} must be an object.`);
+  const { since, lines, playLabel } = content as Record<string, unknown>;
+  if (typeof since !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/.test(since) || !Number.isFinite(Date.parse(since))) {
+    throw new Error(`${filename}.since must be an ISO date with an explicit timezone.`);
   }
-  if (!Array.isArray(content.photos) || content.photos.length === 0) throw new Error(`${filename}: at least one photo is required.`);
-  const kind = kinds.find(value => value === content.kind);
-  if (!kind) throw new Error(`${filename}: unsupported kind.`);
-  return { ...content, title: [content.title[0], content.title[1]], ...readTheme(content, filename), kind };
+  if (!Array.isArray(lines) || lines.length !== 3 || lines.some(line => typeof line !== "string")) {
+    throw new Error(`${filename}.lines must contain exactly three text lines.`);
+  }
+  if (typeof playLabel !== "string" || !playLabel.trim()) throw new Error(`${filename}.playLabel is required.`);
+  return { since, lines: [lines[0], lines[1], lines[2]], playLabel };
+}
+
+export const project: Homepage = { ...homepage, stats: readStats(homepage.stats), ...readTheme(homepage, "public/homepage/content.json") };
+const eventContents = [
+  ["memo-1", event1],
+  ["memo-2", event2],
+  ["memo-3", event3],
+  ["memo-4", event4],
+  ["memo-5", event5],
+  ["memo-6", event6],
+  ["memo-7", event7],
+  ["memo-8", event8],
+  ["memo-9", event9],
+  ["memo-99", event99],
+] as const;
+
+export const events: EventMemory[] = eventContents.map(([id, content]) => {
+  const filename = `public/memories/${id}/content.json`;
+  if (content.id !== id) throw new Error(`${filename}: id must be ${id}.`);
+  if (!content.cover || typeof content.cover.src !== "string" || !content.cover.src.trim() || typeof content.cover.alt !== "string") {
+    throw new Error(`${filename}: cover.src and cover.alt are required.`);
+  }
+  if (!content.song || [content.song.src, content.song.title, content.song.artist].some(value => typeof value !== "string") || !content.song.src.trim()) {
+    throw new Error(`${filename}: song.src, song.title and song.artist are required.`);
+  }
+  if (!Array.isArray(content.lines) || content.lines.some(line => typeof line !== "string")) {
+    throw new Error(`${filename}: lines must be an array of text lines.`);
+  }
+  const photos = "photos" in content ? content.photos : undefined;
+  if (photos !== undefined && (!Array.isArray(photos) || photos.some(photo => !photo || typeof photo.src !== "string" || !photo.src.trim() || typeof photo.alt !== "string"))) {
+    throw new Error(`${filename}: photos must be an array with src and alt for each photo.`);
+  }
+  return content;
 });
