@@ -9,6 +9,7 @@ import type { IntroContent } from "@/data/memory-types";
 import RewindYears from "@/components/rewind-years";
 import RelationshipStats from "@/components/relationship-stats";
 import EventPlayer from "@/components/event-player";
+import ZipperTransition from "@/components/zipper-transition";
 
 const developmentAudioControls = process.env.NODE_ENV === "development";
 const developmentMuteKey = "nov17:dev-audio-muted";
@@ -97,6 +98,9 @@ export default function MemoryPlayer() {
   const [volume, setVolume] = useState(.35);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [zipperTransition, setZipperTransition] = useState(false);
+  const zipperActive = useRef(false);
+  const zipperDestinationSeen = useRef(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const wantsMusic = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -104,7 +108,9 @@ export default function MemoryPlayer() {
   const introContent = isPrelude
     ? project.prelude ?? { lines: ["關於我們的音樂故事"], playLabel: "前往歡迎頁" }
     : project.intro ?? { lines: ["歡迎來到 OUR REWIND", "準備好了嗎", "一起開始吧"], playLabel: "開始回顧" };
-  const song = event?.song ?? project.song;
+  const audioEvent = zipperTransition ? events[2] : event;
+  const song = audioEvent?.song ?? project.song;
+  const audioEventId = audioEvent?.id;
   const eventId = event?.id;
   const colors = project.colors;
   const themeStyle = colors ? {
@@ -167,7 +173,7 @@ export default function MemoryPlayer() {
     const audio = audioRef.current;
     if (!audio) return;
     let active = true;
-    wantsMusic.current = Boolean(eventId) || wantsMusic.current;
+    wantsMusic.current = Boolean(audioEventId) || wantsMusic.current;
     setElapsed(0);
     setDuration(0);
     setAudioError(false);
@@ -176,18 +182,33 @@ export default function MemoryPlayer() {
       if (active && error.name !== "AbortError" && wantsMusic.current) setAudioError(true);
     });
     return () => { active = false; };
-  }, [song.src, eventId]);
+  }, [song.src, audioEventId]);
 
   const enterPrelude = useCallback(() => { router.push("/prelude", { scroll: false }); }, [router]);
   const enterIntro = useCallback(() => { router.push("/intro", { scroll: false }); }, [router]);
   const enterStats = useCallback(() => { void playMusic(); router.push("/stats", { scroll: false }); }, [playMusic, router]);
   const start = useCallback(() => { wantsMusic.current = true; router.push("/memo-1", { scroll: false }); }, [router]);
+  const openZipperDestination = useCallback(() => { router.push("/memo-4", { scroll: false }); }, [router]);
+  const finishZipper = useCallback(() => { zipperActive.current = false; setZipperTransition(false); }, []);
+  useEffect(() => {
+    if (!zipperTransition) return;
+    if (pathname === "/memo-4") {
+      zipperDestinationSeen.current = true;
+      if (reduceMotion) finishZipper();
+    } else if (pathname !== "/memo-3" || zipperDestinationSeen.current) finishZipper();
+  }, [pathname, zipperTransition, reduceMotion, finishZipper]);
   const goTo = useCallback((next: number) => {
-    if (next < 0 || next >= events.length) return;
+    if (zipperActive.current || next < 0 || next >= events.length) return;
     setDirection(next >= index ? 1 : -1);
     wantsMusic.current = true;
+    if (eventId === "memo-3" && events[next].id === "memo-4" && !reduceMotion) {
+      zipperActive.current = true;
+      zipperDestinationSeen.current = false;
+      setZipperTransition(true);
+      return;
+    }
     router.push(`/${events[next].id}`, { scroll: false });
-  }, [index, router]);
+  }, [index, router, eventId, reduceMotion]);
   const home = () => {
     wantsMusic.current = false;
     audioRef.current?.pause();
@@ -226,16 +247,16 @@ export default function MemoryPlayer() {
   };
   const screen = isEvent ? "event" : isPrelude ? "prelude" : isIntro ? "intro" : isStats ? "stats" : "homepage";
 
-  return <MotionConfig reducedMotion="user"><main className={`site-shell is-${screen}${isBlank ? " is-blank-event" : ""} palette-${project.palette ?? "lime"}`} style={themeStyle}>
+  return <MotionConfig reducedMotion="user"><main className={`site-shell is-${screen}${isBlank ? " is-blank-event" : ""}${zipperTransition ? " is-zipper-transition" : ""} palette-${project.palette ?? "lime"}`} style={themeStyle} aria-busy={zipperTransition || undefined}>
     <audio ref={audioRef} src={song.src} muted={muted} loop preload="metadata" onPlay={() => setMusicPlaying(true)} onPause={() => setMusicPlaying(false)} onTimeUpdate={event => setElapsed(event.currentTarget.currentTime)} onLoadedMetadata={readDuration} onDurationChange={readDuration} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted); }} onError={() => setAudioError(true)} data-testid="audio" />
-    {developmentAudioControls && isEvent && !isBlank && <button type="button" className="dev-audio-mute" onClick={toggleMute} aria-pressed={muted} aria-label={muted ? "恢復背景音樂" : "靜音背景音樂"} data-testid="dev-audio-mute">
+    {developmentAudioControls && isEvent && !isBlank && <button type="button" className="dev-audio-mute" onClick={toggleMute} disabled={zipperTransition} aria-pressed={muted} aria-label={muted ? "恢復背景音樂" : "靜音背景音樂"} data-testid="dev-audio-mute">
       <span className="dev-audio-badge">開發</span>
       {muted ? <VolumeX size={17} aria-hidden="true" /> : <Volume2 size={17} aria-hidden="true" />}
       <span>{muted ? "已靜音" : "靜音"}</span>
     </button>}
     {(isPrelude || isIntro || isStats) && <header className="slide-brand"><button type="button" className="page-back" onClick={isPrelude ? home : isIntro ? enterPrelude : enterIntro} aria-label={isPrelude ? "返回主頁" : isIntro ? "返回音樂序章" : "返回歡迎頁"} data-testid="page-back"><ArrowLeft aria-hidden="true" /></button></header>}
-    {isEvent && !isBlank && <button type="button" className="event-close" aria-label="返回統計頁" onClick={enterStats}><X aria-hidden="true" /></button>}
-    <section className="story-stage" aria-label={isEvent ? "事件回顧" : "年度回顧投影片"}>
+    {isEvent && !isBlank && <button type="button" className="event-close" aria-label="返回統計頁" onClick={enterStats} disabled={zipperTransition}><X aria-hidden="true" /></button>}
+    <section className="story-stage" aria-label={isEvent ? "事件回顧" : "年度回顧投影片"} inert={zipperTransition}>
       <div className="slide-viewport" onTouchStart={event => {
         const touch = event.touches[0];
         touchStart.current = { x: touch.clientX, y: touch.clientY };
@@ -251,7 +272,7 @@ export default function MemoryPlayer() {
           <motion.div className="slide-page" key={pathname} initial={{ opacity: 0, x: reduceMotion ? 0 : direction * 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: reduceMotion ? 0 : direction * -18 }} transition={{ duration: reduceMotion ? 0 : .2 }} data-testid={isEvent ? "event-page" : isPrelude ? "prelude" : isIntro ? "intro" : isStats ? "stats" : "cover"} data-event={eventId}>
             {isEvent ? isBlank
               ? <button type="button" className="blank-event-next" aria-label="下一個事件" onClick={() => goTo(index + 1)} />
-              : <EventPlayer event={event} index={index} total={events.length} playing={musicPlaying} elapsed={elapsed} duration={duration} volume={volume} muted={muted} audioError={audioError} onPrevious={() => goTo(index - 1)} onNext={() => goTo(index === events.length - 1 ? 0 : index + 1)} onTogglePlayback={togglePlayback} onSeek={seek} onVolume={changeVolume} onMute={toggleMute} />
+              : <EventPlayer event={event} index={index} total={events.length} playing={!zipperTransition && musicPlaying} elapsed={zipperTransition ? 0 : elapsed} duration={zipperTransition ? 0 : duration} volume={volume} muted={muted} audioError={!zipperTransition && audioError} onPrevious={() => goTo(index - 1)} onNext={() => goTo(index === events.length - 1 ? 0 : index + 1)} onTogglePlayback={togglePlayback} onSeek={seek} onVolume={changeVolume} onMute={toggleMute} />
               : isStats ? <RelationshipStats content={project.stats} onStart={start} onPlayMusic={playMusic} />
               : isPrelude || isIntro ? <Intro content={introContent} onStart={isPrelude ? enterIntro : enterStats} prelude={isPrelude} />
               : isHome ? <Cover onEnter={enterPrelude} onPlayMusic={playMusic} musicPlaying={musicPlaying} /> : null}
@@ -259,5 +280,6 @@ export default function MemoryPlayer() {
         </AnimatePresence>
       </div>
     </section>
+    {zipperTransition && <ZipperTransition ready={pathname === "/memo-4"} onCovered={openZipperDestination} onComplete={finishZipper} />}
   </main></MotionConfig>;
 }

@@ -29,6 +29,7 @@ const initialRender = page => page.evaluate(() => ({
 const waitEvent = async (page, id) => {
   await expect(page).toHaveURL(url(`/${id}`));
   await expect(page.getByTestId('event-page')).toHaveAttribute('data-event', id);
+  await expect(page.getByTestId('zipper-transition')).toHaveCount(0, { timeout: 12000 });
   await expect(page.getByTestId('audio')).toHaveAttribute('src', events.find(event => event.id === id).song.src);
 };
 const setRange = async (locator, value) => locator.evaluate((input, next) => {
@@ -44,7 +45,7 @@ try {
     expect(Array.isArray(event.lines) && event.lines.every(line => typeof line === 'string')).toBe(true);
     expect(existsSync(new URL(`../public${event.cover.src}`, import.meta.url))).toBe(true);
     expect(existsSync(new URL(`../public${event.song.src}`, import.meta.url))).toBe(true);
-    for (const photo of event.photos ?? []) expect(existsSync(new URL(`../public${photo.src}`, import.meta.url))).toBe(true);
+    for (const photo of event.photos ?? []) expect(existsSync(new URL(`../public/${photo.src.replace(/^\//, '')}`, import.meta.url))).toBe(true);
   }
   const routes = ['/home', '/prelude', '/intro', '/stats', ...events.map(event => `/${event.id}`)];
   const serverContext = await browser.newContext({ viewport, javaScriptEnabled: false });
@@ -109,11 +110,29 @@ try {
   expect(await audio.evaluate(element => Number(element.dataset.loads))).toBe(0);
   expect(await audio.evaluate(element => element.currentTime)).toBeGreaterThan(landingTime);
   expect(await node.evaluate(element => element === document.querySelector('audio'))).toBe(true);
+  await page.evaluate(() => {
+    window.__statsTransitionCheck = { started: false, frames: 0, exposedFrames: 0 };
+    const sample = () => {
+      const stats = document.querySelector('.stats-page');
+      const overlay = document.querySelector('[data-testid="stats-transition"]');
+      const check = window.__statsTransitionCheck;
+      if (overlay) check.started = true;
+      if (stats && check.started) {
+        check.frames++;
+        if (!overlay || Number(getComputedStyle(overlay).opacity) < .999) check.exposedFrames++;
+      }
+      if (stats || !check.started) requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
   await page.getByTestId('stats-continue').click();
   await expect(page.getByTestId('stats-transition')).toBeVisible();
   await expect(page).toHaveURL(url('/stats'));
   await expect(audio).toHaveAttribute('src', project.song.src);
   await waitEvent(page, 'memo-1');
+  const transitionCheck = await page.evaluate(() => window.__statsTransitionCheck);
+  expect(transitionCheck.frames).toBeGreaterThan(0);
+  expect(transitionCheck.exposedFrames).toBe(0);
   expect(await node.evaluate(element => element === document.querySelector('audio'))).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__entrances.filter(event => event.kind === 'event-line' && event.event === 'memo-1').length), { timeout: Math.max(12000, events[0].lines.length * 800 + 2000) }).toBe(events[0].lines.length);
   expect(await page.evaluate(() => window.__entrances.filter(event => event.kind === 'event-line' && event.event === 'memo-1').map(event => event.index))).toEqual(events[0].lines.map((_, index) => index));
@@ -231,7 +250,7 @@ try {
   await expect(cancel.getByTestId('stats-transition')).toBeVisible();
   await cancel.getByTestId('page-back').click();
   await expect(cancel).toHaveURL(url('/intro'));
-  await cancel.waitForTimeout(2600);
+  await cancel.waitForTimeout(3500);
   await expect(cancel).toHaveURL(url('/intro'));
   await cancel.close();
   expect(errors).toEqual([]);
