@@ -2,7 +2,7 @@ import { chromium, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { loadMemoryData } from './load-memory-data.mjs';
 
-const { events, project } = loadMemoryData();
+const { events, eventSequence, project } = loadMemoryData();
 const baseURL = process.env.NOV17_TEST_URL || 'http://127.0.0.1:3000';
 const viewport = { width: 1440, height: 1080 };
 const url = route => new URL(route, baseURL).href;
@@ -10,7 +10,7 @@ const qa = new URL('../.qa/', import.meta.url);
 mkdirSync(qa, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const errors = [], hydrationChecks = [], durations = {};
-const blank = id => id === 'memo-5' || id === 'memo-7';
+const blank = id => id === 'memo-5';
 const observe = page => {
   expect(page.viewportSize()).toEqual(viewport);
   page.on('pageerror', error => errors.push(error.message));
@@ -27,7 +27,7 @@ const initialRender = page => page.evaluate(() => ({
   months: document.querySelectorAll('.month-timeline, .month-button').length,
 }));
 const waitEvent = async (page, id) => {
-  await expect(page).toHaveURL(url(`/${id}`));
+  await expect(page).toHaveURL(url(`/${id}`), { timeout: 12000 });
   await expect(page.getByTestId('event-page')).toHaveAttribute('data-event', id);
   await expect(page.getByTestId('zipper-transition')).toHaveCount(0, { timeout: 12000 });
   await expect(page.getByTestId('audio')).toHaveAttribute('src', events.find(event => event.id === id).song.src);
@@ -40,11 +40,12 @@ const setRange = async (locator, value) => locator.evaluate((input, next) => {
 const humanTime = seconds => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.floor(Math.max(0, seconds)) % 60).padStart(2, '0')}`;
 
 try {
-  expect(events.map(event => event.id)).toEqual([...Array.from({ length: 9 }, (_, i) => `memo-${i + 1}`), 'memo-99']);
+  expect(events.map(event => event.id)).toEqual(['memo-1', 'memo-2', 'memo-3', 'memo-4', 'memo-5', 'memo-6', 'memo-6.5', 'memo-7', 'memo-67', 'memo-8', 'memo-9', 'memo-99']);
   for (const event of events) {
     expect(Array.isArray(event.lines) && event.lines.every(line => typeof line === 'string')).toBe(true);
     expect(existsSync(new URL(`../public${event.cover.src}`, import.meta.url))).toBe(true);
-    expect(existsSync(new URL(`../public${event.song.src}`, import.meta.url))).toBe(true);
+    expect(existsSync(new URL(`../public${event.song.src}`, import.meta.url)), `${event.id}: missing song ${event.song.src}`).toBe(true);
+    if (event.quiz) expect(existsSync(new URL(`../public${event.quiz.result.drumSrc}`, import.meta.url))).toBe(true);
     for (const photo of event.photos ?? []) expect(existsSync(new URL(`../public/${photo.src.replace(/^\//, '')}`, import.meta.url))).toBe(true);
   }
   const routes = ['/home', '/prelude', '/intro', '/stats', ...events.map(event => `/${event.id}`)];
@@ -59,7 +60,7 @@ try {
       observe(page);
       await page.goto(url(route), { waitUntil: 'networkidle' });
       expect(await initialRender(page)).toEqual(snapshot);
-      if (route.startsWith('/memo-') && !blank(route.slice(1))) {
+      if (route.startsWith('/memo-') && !blank(route.slice(1)) && !events.find(event => route === `/${event.id}`)?.quiz) {
         if (await page.getByTestId('audio').evaluate(audio => audio.paused)) await page.getByTestId('event-play-toggle').click();
         await expect.poll(() => page.getByTestId('audio').evaluate(audio => !audio.paused)).toBe(true);
       }
@@ -177,14 +178,21 @@ try {
   observe(sequence);
   await sequence.goto(url('/memo-1'));
   if (await sequence.getByTestId('audio').evaluate(audio => audio.paused)) await sequence.getByTestId('event-play-toggle').click();
-  for (const [index, event] of events.entries()) {
+  for (const [index, event] of eventSequence.entries()) {
     await waitEvent(sequence, event.id);
     await expect.poll(() => sequence.getByTestId('audio').evaluate(audio => Number.isFinite(audio.duration) && audio.duration > 0)).toBe(true);
     durations[event.id] = await sequence.getByTestId('audio').evaluate(audio => audio.duration);
     expect(await sequence.locator('main').evaluate(element => getComputedStyle(element).backgroundColor)).toBe(homeBackground);
     await expect(sequence.locator('.month-timeline,.month-button,.memory-grid')).toHaveCount(0);
     await expect(sequence.getByTestId('dev-audio-mute')).toHaveCount(0);
-    if (blank(event.id)) {
+    if (event.quiz) {
+      await expect(sequence.getByTestId('event-quiz').getByRole('heading', { level: 1 })).toHaveText(event.quiz.title);
+      for (const question of event.quiz.questions) {
+        await expect(sequence.getByTestId('event-quiz').getByRole('heading', { level: 2 })).toHaveText(question.prompt);
+        await sequence.locator(`[data-option="${question.answer}"]`).click();
+      }
+      continue;
+    } else if (blank(event.id)) {
       await expect(sequence.getByTestId('event-player')).toHaveCount(0);
       expect(await sequence.locator('body').innerText()).toBe('');
       if (event.id === 'memo-5') await sequence.screenshot({ path: new URL('desktop-event-blank.png', qa).pathname });
@@ -202,11 +210,11 @@ try {
         await expect.poll(() => image.evaluate(element => element.complete && element.naturalWidth > 0)).toBe(true);
         await expect(image).toHaveCSS('object-fit', 'contain');
       }
-      await expect(sequence.locator('.event-ambient')).toHaveCount(event.id === 'memo-1' ? 1 : 0);
+      await expect(sequence.locator('.event-ambient')).toHaveCount(['memo-1', 'memo-2', 'memo-3', 'memo-4', 'memo-6', 'memo-8'].includes(event.id) ? 1 : 0);
       await expect(sequence.getByRole('slider', { name: '播放進度' })).toHaveAttribute('max', String(durations[event.id]));
       expect(await sequence.getByTestId('audio').evaluate(audio => audio.currentTime)).toBeLessThan(2);
     }
-    if (index < events.length - 1) await sequence.getByRole('button', { name: '下一個事件', exact: true }).click();
+    if (index < eventSequence.length - 1) await sequence.getByRole('button', { name: '下一個事件', exact: true }).click();
   }
   await sequence.getByRole('button', { name: '從第一個事件重新播放' }).click();
   await waitEvent(sequence, 'memo-1');
@@ -232,11 +240,17 @@ try {
 
   const failed = await browser.newPage({ viewport, reducedMotion: 'reduce' });
   observe(failed);
-  await failed.route(url(events[1].song.src), route => route.fulfill({ status: 404, body: 'missing audio' }));
+  let restored = false;
+  await failed.route(url(events[1].song.src), route => restored ? route.continue() : route.fulfill({ status: 404, body: 'missing audio' }));
   await failed.goto(url('/memo-2'));
   await expect(failed.locator('.event-audio-error')).toBeVisible();
   await expect(failed.getByRole('slider', { name: '播放進度' })).toBeDisabled();
   await expect(failed.getByTestId('elapsed-time')).toHaveText('0:00');
+  await failed.waitForTimeout(800);
+  restored = true;
+  await failed.getByTestId('event-play-toggle').click();
+  await expect.poll(() => failed.getByTestId('audio').evaluate(audio => !audio.paused && audio.currentTime > .1)).toBe(true);
+  await expect(failed.locator('.event-audio-error')).toHaveCount(0);
   await failed.getByRole('button', { name: '下一個事件', exact: true }).click();
   await waitEvent(failed, 'memo-3');
   await expect.poll(() => failed.getByTestId('audio').evaluate(audio => audio.duration > 0 && !audio.paused)).toBe(true);
@@ -254,7 +268,7 @@ try {
   await expect(cancel).toHaveURL(url('/intro'));
   await cancel.close();
   expect(errors).toEqual([]);
-  const result = { ok: true, checkedAt: new Date().toISOString(), viewport, routes, hydrationChecks, events: events.length, blankEvents: ['memo-5','memo-7'], durations, nativeAudioProgress: true, seekAndPlayback: true, websiteVolume: true, systemVolumeAccess: false, perEventReset: true, sequentialLines: true, statsTransition: true, legacyMemoRedirect: true, missingAudioRecovery: true, errors };
+  const result = { ok: true, checkedAt: new Date().toISOString(), viewport, routes, hydrationChecks, events: events.length, blankEvents: ['memo-5'], durations, nativeAudioProgress: true, seekAndPlayback: true, websiteVolume: true, systemVolumeAccess: false, perEventReset: true, sequentialLines: true, statsTransition: true, legacyMemoRedirect: true, missingAudioRecovery: true, errors };
   writeFileSync(new URL('browser-validation.json', qa), JSON.stringify(result, null, 2));
-  console.log('PASS: 1440x1080; landing flow and shared audio; 10 event routes; blank 5/7; actual durations/progress; play/pause/seek/volume; sequential text; reset on navigation; history/redirect; missing audio recovery; no hydration errors.');
+  console.log('PASS: 1440x1080; landing flow and shared audio; event and quiz routes; blank 5; actual durations/progress; play/pause/seek/volume; sequential text; reset on navigation; history/redirect; missing audio recovery; no hydration errors.');
 } finally { await browser.close(); }

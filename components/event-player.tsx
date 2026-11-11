@@ -19,6 +19,7 @@ type EventPlayerProps = {
   volume: number;
   muted: boolean;
   audioError: boolean;
+  audioDiagnostic?: string;
   onPrevious: () => void;
   onNext: () => void;
   onTogglePlayback: () => void;
@@ -27,12 +28,13 @@ type EventPlayerProps = {
   onMute: () => void;
 };
 
-export default function EventPlayer({ event, index, total, playing, elapsed, duration, volume, muted, audioError, onPrevious, onNext, onTogglePlayback, onSeek, onVolume, onMute }: EventPlayerProps) {
+export default function EventPlayer({ event, index, total, playing, elapsed, duration, volume, muted, audioError, audioDiagnostic, onPrevious, onNext, onTogglePlayback, onSeek, onVolume, onMute }: EventPlayerProps) {
   const progress = duration > 0 ? Math.min(100, elapsed / duration * 100) : 0;
   const last = index === total - 1;
   const hasPhotos = Boolean(event.photos?.length);
-  return <div className={`event-page${hasPhotos ? " has-photos" : ""}`} data-testid="event-player" data-event={event.id}>
-    {event.id === "memo-1" && <div className="event-ambient" aria-hidden="true">
+  const hasAmbient = ["memo-1", "memo-2", "memo-3", "memo-4", "memo-6", "memo-8"].includes(event.id);
+  return <div className={`event-page${hasPhotos ? " has-photos" : ""}${hasAmbient ? " has-ambient" : ""}`} data-testid="event-player" data-event={event.id}>
+    {hasAmbient && <div className="event-ambient" aria-hidden="true">
       <img src={event.cover.src} alt="" decoding="async" />
     </div>}
     <section className="event-music" aria-label="音樂播放器">
@@ -57,6 +59,7 @@ export default function EventPlayer({ event, index, total, playing, elapsed, dur
           <Volume2 className="event-volume-high" aria-hidden="true" />
         </div>
         {audioError && <p className="event-audio-error" role="status">音樂暫時無法播放，請按播放鍵重試。</p>}
+        {audioError && audioDiagnostic && <details className="event-audio-diagnostic" data-testid="audio-diagnostic"><summary>開發播放診斷</summary><pre>{audioDiagnostic}</pre></details>}
       </div>
     </section>
     <section className="event-story" aria-label="回憶文字">
@@ -64,7 +67,7 @@ export default function EventPlayer({ event, index, total, playing, elapsed, dur
         {event.lines.map((line, lineIndex) => <p key={lineIndex} className="event-line" style={{ "--intro-delay": `${.15 + lineIndex * .8}s` } as CSSProperties}>{line}</p>)}
       </div>
     </section>
-    {hasPhotos && <section className="event-photos" aria-label="回憶照片">
+    {hasPhotos && <section className={`event-photos${event.photos?.length === 4 ? " has-four-photos" : ""}`} aria-label="回憶照片">
       {event.photos?.map((photo, photoIndex) => <figure className="event-snapshot" key={`${photo.src}-${photoIndex}`}>
         <img src={photo.src} alt={photo.alt} decoding="async" />
       </figure>)}

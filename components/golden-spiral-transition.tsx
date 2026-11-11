@@ -7,11 +7,11 @@ export const GOLDEN_SPIRAL_DURATION_MS = 3200;
 const phi = (1 + Math.sqrt(5)) / 2;
 // A golden spiral grows by phi with each quarter turn.
 const growth = Math.log(phi) / (Math.PI / 2);
-const turns = Math.log(1600 / 3) / growth;
-const colors = ["#c1afea", "#d2f65a", "#ff7049", "#f5f3eb", "#20221e"];
+const colors = ["#f5f3eb", "#d8cbb3", "#a99b83", "#34312b"];
 const star = "50,0 60,31 85,15 69,40 100,50 69,60 85,85 60,69 50,100 40,69 15,85 31,60 0,50 31,40 15,15 40,31";
 
-function spiralEdge(phase: number, reverse = false) {
+function spiralEdge(phase: number, reverse = false, outerRadius = 1600) {
+  const turns = Math.log(outerRadius / 3) / growth;
   const points = Array.from({ length: 73 }, (_, index) => {
     const angle = turns * index / 72;
     const radius = 3 * Math.exp(growth * angle);
@@ -49,6 +49,8 @@ export default function GoldenSpiralTransition() {
     const textureContext = texture.getContext("2d", { alpha: false });
     if (!textureContext) return;
     const paths = ribbons.map(ribbon => ({ ...ribbon, shape: new Path2D(ribbon.path) }));
+    const spiral = spiralEdge(-Math.log(420 / 3) / growth, false, 420);
+    const spiralPath = new Path2D(`M${spiral.start} ${spiral.curves}`);
     const starPoints = star.split(" ").map(point => point.split(",").map(Number));
     const started = performance.now();
     let frame = 0;
@@ -62,7 +64,7 @@ export default function GoldenSpiralTransition() {
       const eased = progress * progress * (3 - 2 * progress);
       context.setTransform(density, 0, 0, density, width / 2 * density, height / 2 * density);
       context.save();
-      context.rotate((28 - 508 * eased) * Math.PI / 180);
+      context.rotate((28 - 620 * eased) * Math.PI / 180);
       // Reuse a native-resolution texture without enlarging its pixels.
       context.drawImage(texture, -diameter / 2, -diameter / 2, diameter, diameter);
       context.restore();
@@ -70,7 +72,7 @@ export default function GoldenSpiralTransition() {
       context.save();
       const depth = diameter / 1000 * phi ** (2 * eased);
       context.scale(depth, depth);
-      context.rotate(Math.PI * eased);
+      context.rotate(Math.PI * 1.2 * eased);
       context.strokeStyle = "#f5f3eb";
       context.lineWidth = 1.4;
       context.globalAlpha = .5;
@@ -84,12 +86,24 @@ export default function GoldenSpiralTransition() {
         context.stroke();
         context.restore();
       }
+      // Draw the golden curve as a vector so it stays sharp while moving inward.
+      context.save();
+      context.translate(-500, -500);
+      context.globalAlpha = .3;
+      context.strokeStyle = "#34312b";
+      context.lineWidth = 5.5;
+      context.stroke(spiralPath);
+      context.globalAlpha = 1;
+      context.strokeStyle = "#c99a3e";
+      context.lineWidth = 3;
+      context.stroke(spiralPath);
+      context.restore();
       context.globalAlpha = 1;
       context.strokeStyle = "#20221e";
       context.lineWidth = 2;
       for (const [x, y, size, rotation, fill] of [
-        [176, -154, .65, 18, "#d2f65a"],
-        [-128, 94, .36, -18, "#ff7049"],
+        [176, -154, .65, 18, "#d8cbb3"],
+        [-128, 94, .36, -18, "#d8cbb3"],
         [19, -39, .18, 0, "#f5f3eb"],
       ] as const) {
         context.save();

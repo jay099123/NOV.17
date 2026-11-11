@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
 import { ArrowLeft, ArrowRight, Play, Volume2, VolumeX, X } from "lucide-react";
-import { events, project } from "@/data/memories";
+import { events, eventSequence, project } from "@/data/memories";
 import type { IntroContent } from "@/data/memory-types";
 import RewindYears from "@/components/rewind-years";
 import RelationshipStats from "@/components/relationship-stats";
 import EventPlayer from "@/components/event-player";
 import ZipperTransition from "@/components/zipper-transition";
+import EventQuiz from "@/components/event-quiz";
 
 const developmentAudioControls = process.env.NODE_ENV === "development";
 const developmentMuteKey = "nov17:dev-audio-muted";
@@ -83,16 +84,18 @@ function Intro({ content, onStart, prelude = false }: { content: IntroContent; o
 export default function MemoryPlayer() {
   const router = useRouter();
   const pathname = usePathname();
-  const index = events.findIndex(event => pathname === `/${event.id}`);
-  const event = events[index];
-  const isEvent = index !== -1;
-  const isBlank = index === 4 || index === 6;
+  const event = events.find(event => pathname === `/${event.id}`);
+  const index = eventSequence.findIndex(item => item.id === (event?.id === "memo-67" ? "memo-7" : event?.id));
+  const isEvent = Boolean(event);
+  const isBlank = event?.id === "memo-5";
+  const isQuiz = Boolean(event?.quiz);
   const isHome = pathname === "/home";
   const isPrelude = pathname === "/prelude";
   const isIntro = pathname === "/intro";
   const isStats = pathname === "/stats";
   const [direction, setDirection] = useState(1);
   const [audioError, setAudioError] = useState(false);
+  const [audioDiagnostic, setAudioDiagnostic] = useState<string>();
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(.35);
@@ -101,14 +104,17 @@ export default function MemoryPlayer() {
   const [zipperTransition, setZipperTransition] = useState(false);
   const zipperActive = useRef(false);
   const zipperDestinationSeen = useRef(false);
+  const quizBranch = useRef("memo-7");
+  const storyRef = useRef<HTMLElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRetryTimer = useRef<number | null>(null);
   const wantsMusic = useRef(false);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const reduceMotion = useReducedMotion();
   const introContent = isPrelude
     ? project.prelude ?? { lines: ["關於我們的音樂故事"], playLabel: "前往歡迎頁" }
     : project.intro ?? { lines: ["歡迎來到 OUR REWIND", "準備好了嗎", "一起開始吧"], playLabel: "開始回顧" };
-  const audioEvent = zipperTransition ? events[2] : event;
+  const audioEvent = zipperTransition ? events[1] : event;
   const song = audioEvent?.song ?? project.song;
   const audioEventId = audioEvent?.id;
   const eventId = event?.id;
@@ -144,23 +150,60 @@ export default function MemoryPlayer() {
     }
   };
 
+  const cancelAudioRetry = useCallback(() => {
+    if (audioRetryTimer.current !== null) window.clearTimeout(audioRetryTimer.current);
+    audioRetryTimer.current = null;
+  }, []);
+
+  const reportAudioFailure = useCallback((audio: HTMLAudioElement, error?: DOMException) => {
+    if (!error && !audio.error) return;
+    setAudioError(true);
+    setMusicPlaying(false);
+    if (!developmentAudioControls) return;
+    const diagnostic = {
+      page: window.location.pathname,
+      src: audio.getAttribute("src"),
+      playError: error?.name,
+      playMessage: error?.message,
+      mediaCode: audio.error?.code,
+      mediaMessage: audio.error?.message,
+      readyState: audio.readyState,
+      networkState: audio.networkState,
+      paused: audio.paused,
+      muted: audio.muted,
+      volume: audio.volume,
+      browser: navigator.userAgent,
+    };
+    setAudioDiagnostic(JSON.stringify(diagnostic, null, 2));
+    console.warn("[NOV.17 audio]", diagnostic);
+  }, []);
+
   const playMusic = useCallback((): Promise<boolean> => {
     const audio = audioRef.current;
     if (!audio) return Promise.resolve(false);
+    cancelAudioRetry();
+    const attemptedSource = audio.getAttribute("src");
     wantsMusic.current = true;
     setAudioError(false);
+    setAudioDiagnostic(undefined);
+    // A failed media resource stays failed until load() resets its error state.
+    if (audio.error) {
+      setElapsed(0);
+      setDuration(0);
+      audio.load();
+    }
     return audio.play().then(() => !audio.paused).catch((error: DOMException) => {
-      if (error.name !== "AbortError" && wantsMusic.current) setAudioError(true);
+      if (error.name !== "AbortError" && wantsMusic.current && attemptedSource === audio.getAttribute("src")) reportAudioFailure(audio, error);
       return false;
     });
-  }, []);
+  }, [cancelAudioRetry, reportAudioFailure]);
 
   const togglePlayback = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) void playMusic();
-    else { wantsMusic.current = false; audio.pause(); }
-  }, [playMusic]);
+    if (audio.paused || audio.error || audioError) void playMusic();
+    else { wantsMusic.current = false; cancelAudioRetry(); audio.pause(); }
+  }, [playMusic, cancelAudioRetry, audioError]);
 
   useEffect(() => {
     if (!isHome) return;
@@ -173,42 +216,79 @@ export default function MemoryPlayer() {
     const audio = audioRef.current;
     if (!audio) return;
     let active = true;
+    let retried = false;
+    const attemptPlayback = () => {
+      void audio.play().catch((error: DOMException) => {
+        if (active && error.name !== "AbortError" && wantsMusic.current) reportAudioFailure(audio, error);
+      });
+    };
+    const retryFailedResource = () => {
+      if (!audio.error || retried || !wantsMusic.current) return;
+      retried = true;
+      audioRetryTimer.current = window.setTimeout(() => {
+        audioRetryTimer.current = null;
+        if (!active || !wantsMusic.current) return;
+        setElapsed(0);
+        setDuration(0);
+        audio.load();
+        attemptPlayback();
+      }, 350);
+    };
     wantsMusic.current = Boolean(audioEventId) || wantsMusic.current;
     setElapsed(0);
     setDuration(0);
     setAudioError(false);
+    setAudioDiagnostic(undefined);
+    audio.addEventListener("error", retryFailedResource);
     audio.load();
-    if (wantsMusic.current) audio.play().catch((error: DOMException) => {
-      if (active && error.name !== "AbortError" && wantsMusic.current) setAudioError(true);
-    });
-    return () => { active = false; };
-  }, [song.src, audioEventId]);
+    if (wantsMusic.current) attemptPlayback();
+    return () => {
+      active = false;
+      cancelAudioRetry();
+      audio.removeEventListener("error", retryFailedResource);
+    };
+  }, [song.src, audioEventId, cancelAudioRetry, reportAudioFailure]);
 
   const enterPrelude = useCallback(() => { router.push("/prelude", { scroll: false }); }, [router]);
   const enterIntro = useCallback(() => { router.push("/intro", { scroll: false }); }, [router]);
   const enterStats = useCallback(() => { void playMusic(); router.push("/stats", { scroll: false }); }, [playMusic, router]);
   const start = useCallback(() => { wantsMusic.current = true; router.push("/memo-1", { scroll: false }); }, [router]);
-  const openZipperDestination = useCallback(() => { router.push("/memo-4", { scroll: false }); }, [router]);
+  const openZipperDestination = useCallback(() => { router.push("/memo-3", { scroll: false }); }, [router]);
   const finishZipper = useCallback(() => { zipperActive.current = false; setZipperTransition(false); }, []);
+  const beginQuizResult = useCallback(() => {
+    wantsMusic.current = false;
+    cancelAudioRetry();
+    audioRef.current?.pause();
+  }, [cancelAudioRetry]);
+  const finishQuiz = useCallback((allCorrect: boolean) => {
+    if (pathname !== "/memo-6.5") return;
+    wantsMusic.current = true;
+    quizBranch.current = allCorrect ? "memo-7" : "memo-67";
+    router.push(`/${quizBranch.current}`, { scroll: false });
+  }, [pathname, router]);
+  useEffect(() => {
+    if (eventId === "memo-7" || eventId === "memo-67") quizBranch.current = eventId;
+  }, [eventId]);
   useEffect(() => {
     if (!zipperTransition) return;
-    if (pathname === "/memo-4") {
+    if (pathname === "/memo-3") {
       zipperDestinationSeen.current = true;
       if (reduceMotion) finishZipper();
-    } else if (pathname !== "/memo-3" || zipperDestinationSeen.current) finishZipper();
+    } else if (pathname !== "/memo-2" || zipperDestinationSeen.current) finishZipper();
   }, [pathname, zipperTransition, reduceMotion, finishZipper]);
   const goTo = useCallback((next: number) => {
-    if (zipperActive.current || next < 0 || next >= events.length) return;
+    if (zipperActive.current || next < 0 || next >= eventSequence.length || (isQuiz && next > index)) return;
+    const destination = eventId === "memo-8" && next === index - 1 ? quizBranch.current : eventSequence[next].id;
     setDirection(next >= index ? 1 : -1);
     wantsMusic.current = true;
-    if (eventId === "memo-3" && events[next].id === "memo-4" && !reduceMotion) {
+    if (eventId === "memo-2" && destination === "memo-3" && !reduceMotion) {
       zipperActive.current = true;
       zipperDestinationSeen.current = false;
       setZipperTransition(true);
       return;
     }
-    router.push(`/${events[next].id}`, { scroll: false });
-  }, [index, router, eventId, reduceMotion]);
+    router.push(`/${destination}`, { scroll: false });
+  }, [index, router, eventId, reduceMotion, isQuiz]);
   const home = () => {
     wantsMusic.current = false;
     audioRef.current?.pause();
@@ -247,8 +327,8 @@ export default function MemoryPlayer() {
   };
   const screen = isEvent ? "event" : isPrelude ? "prelude" : isIntro ? "intro" : isStats ? "stats" : "homepage";
 
-  return <MotionConfig reducedMotion="user"><main className={`site-shell is-${screen}${isBlank ? " is-blank-event" : ""}${zipperTransition ? " is-zipper-transition" : ""} palette-${project.palette ?? "lime"}`} style={themeStyle} aria-busy={zipperTransition || undefined}>
-    <audio ref={audioRef} src={song.src} muted={muted} loop preload="metadata" onPlay={() => setMusicPlaying(true)} onPause={() => setMusicPlaying(false)} onTimeUpdate={event => setElapsed(event.currentTarget.currentTime)} onLoadedMetadata={readDuration} onDurationChange={readDuration} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted); }} onError={() => setAudioError(true)} data-testid="audio" />
+  return <MotionConfig reducedMotion="user"><main className={`site-shell is-${screen}${isBlank ? " is-blank-event" : ""}${isQuiz ? " is-quiz" : ""}${zipperTransition ? " is-zipper-transition" : ""} palette-${project.palette ?? "lime"}`} style={themeStyle} aria-busy={zipperTransition || undefined}>
+    <audio ref={audioRef} src={song.src} muted={muted} loop preload="metadata" onPlay={() => setMusicPlaying(true)} onPlaying={() => { setAudioError(false); setAudioDiagnostic(undefined); }} onPause={() => setMusicPlaying(false)} onTimeUpdate={event => setElapsed(event.currentTarget.currentTime)} onLoadedMetadata={readDuration} onDurationChange={readDuration} onVolumeChange={event => { setVolume(event.currentTarget.volume); setMuted(event.currentTarget.muted); }} onError={event => reportAudioFailure(event.currentTarget)} data-testid="audio" />
     {developmentAudioControls && isEvent && !isBlank && <button type="button" className="dev-audio-mute" onClick={toggleMute} disabled={zipperTransition} aria-pressed={muted} aria-label={muted ? "恢復背景音樂" : "靜音背景音樂"} data-testid="dev-audio-mute">
       <span className="dev-audio-badge">開發</span>
       {muted ? <VolumeX size={17} aria-hidden="true" /> : <Volume2 size={17} aria-hidden="true" />}
@@ -256,7 +336,7 @@ export default function MemoryPlayer() {
     </button>}
     {(isPrelude || isIntro || isStats) && <header className="slide-brand"><button type="button" className="page-back" onClick={isPrelude ? home : isIntro ? enterPrelude : enterIntro} aria-label={isPrelude ? "返回主頁" : isIntro ? "返回音樂序章" : "返回歡迎頁"} data-testid="page-back"><ArrowLeft aria-hidden="true" /></button></header>}
     {isEvent && !isBlank && <button type="button" className="event-close" aria-label="返回統計頁" onClick={enterStats} disabled={zipperTransition}><X aria-hidden="true" /></button>}
-    <section className="story-stage" aria-label={isEvent ? "事件回顧" : "年度回顧投影片"} inert={zipperTransition}>
+    <section ref={storyRef} className="story-stage" aria-label={isEvent ? "事件回顧" : "年度回顧投影片"} inert={zipperTransition}>
       <div className="slide-viewport" onTouchStart={event => {
         const touch = event.touches[0];
         touchStart.current = { x: touch.clientX, y: touch.clientY };
@@ -270,9 +350,10 @@ export default function MemoryPlayer() {
       }}>
         <AnimatePresence mode="wait" initial={false}>
           <motion.div className="slide-page" key={pathname} initial={{ opacity: 0, x: reduceMotion ? 0 : direction * 24 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: reduceMotion ? 0 : direction * -18 }} transition={{ duration: reduceMotion ? 0 : .2 }} data-testid={isEvent ? "event-page" : isPrelude ? "prelude" : isIntro ? "intro" : isStats ? "stats" : "cover"} data-event={eventId}>
-            {isEvent ? isBlank
+            {event ? isBlank
               ? <button type="button" className="blank-event-next" aria-label="下一個事件" onClick={() => goTo(index + 1)} />
-              : <EventPlayer event={event} index={index} total={events.length} playing={!zipperTransition && musicPlaying} elapsed={zipperTransition ? 0 : elapsed} duration={zipperTransition ? 0 : duration} volume={volume} muted={muted} audioError={!zipperTransition && audioError} onPrevious={() => goTo(index - 1)} onNext={() => goTo(index === events.length - 1 ? 0 : index + 1)} onTogglePlayback={togglePlayback} onSeek={seek} onVolume={changeVolume} onMute={toggleMute} />
+              : event.quiz ? <EventQuiz event={event} quiz={event.quiz} onComplete={finishQuiz} onPlayMusic={playMusic} onResultStart={beginQuizResult} muted={muted} volume={volume} />
+              : <EventPlayer event={event} index={index} total={eventSequence.length} playing={!(zipperTransition && eventId === "memo-3") && musicPlaying} elapsed={zipperTransition && eventId === "memo-3" ? 0 : elapsed} duration={zipperTransition && eventId === "memo-3" ? 0 : duration} volume={volume} muted={muted} audioError={!(zipperTransition && eventId === "memo-3") && audioError} audioDiagnostic={developmentAudioControls ? audioDiagnostic : undefined} onPrevious={() => goTo(index - 1)} onNext={() => goTo(index === eventSequence.length - 1 ? 0 : index + 1)} onTogglePlayback={togglePlayback} onSeek={seek} onVolume={changeVolume} onMute={toggleMute} />
               : isStats ? <RelationshipStats content={project.stats} onStart={start} onPlayMusic={playMusic} />
               : isPrelude || isIntro ? <Intro content={introContent} onStart={isPrelude ? enterIntro : enterStats} prelude={isPrelude} />
               : isHome ? <Cover onEnter={enterPrelude} onPlayMusic={playMusic} musicPlaying={musicPlaying} /> : null}
@@ -280,6 +361,6 @@ export default function MemoryPlayer() {
         </AnimatePresence>
       </div>
     </section>
-    {zipperTransition && <ZipperTransition ready={pathname === "/memo-4"} onCovered={openZipperDestination} onComplete={finishZipper} />}
+    {zipperTransition && <ZipperTransition sourceRef={storyRef} ready={pathname === "/memo-3"} onCovered={openZipperDestination} onComplete={finishZipper} />}
   </main></MotionConfig>;
 }

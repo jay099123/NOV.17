@@ -7,11 +7,13 @@ import event3 from "../public/memories/memo-3/content.json";
 import event4 from "../public/memories/memo-4/content.json";
 import event5 from "../public/memories/memo-5/content.json";
 import event6 from "../public/memories/memo-6/content.json";
+import event65 from "../public/memories/memo-6.5/content.json";
 import event7 from "../public/memories/memo-7/content.json";
+import event67 from "../public/memories/memo-67/content.json";
 import event8 from "../public/memories/memo-8/content.json";
 import event9 from "../public/memories/memo-9/content.json";
 import event99 from "../public/memories/memo-99/content.json";
-import type { EventMemory, Homepage, PageColors, Palette, StatsContent } from "./memory-types";
+import type { EventMemory, EventQuiz, Homepage, PageColors, Palette, StatsContent } from "./memory-types";
 
 const palettes: Palette[] = ["lime", "pink", "blue", "orange", "violet"];
 const namedColors: Record<string, string> = Object.fromEntries(
@@ -67,11 +69,46 @@ const eventContents = [
   ["memo-4", event4],
   ["memo-5", event5],
   ["memo-6", event6],
+  ["memo-6.5", event65],
   ["memo-7", event7],
+  ["memo-67", event67],
   ["memo-8", event8],
   ["memo-9", event9],
   ["memo-99", event99],
 ] as const;
+
+function readQuiz(content: unknown, filename: string): EventQuiz {
+  if (!content || typeof content !== "object") throw new Error(`${filename}: quiz must be an object.`);
+  const { title, progressLabel, questions, result } = content as Record<string, unknown>;
+  if (typeof title !== "string" || !title.trim() || typeof progressLabel !== "string" || !progressLabel.trim()) {
+    throw new Error(`${filename}: quiz.title and quiz.progressLabel are required.`);
+  }
+  if (!Array.isArray(questions) || !questions.length) throw new Error(`${filename}: quiz.questions must not be empty.`);
+  const resultFields = ["waitingText", "correctTitle", "incorrectTitle", "questionLabel", "correctLabel", "incorrectLabel", "drumSrc"];
+  if (!result || typeof result !== "object" || resultFields.some(key => {
+    const value = (result as Record<string, unknown>)[key];
+    return typeof value !== "string" || !value.trim();
+  })) throw new Error(`${filename}: quiz.result needs waitingText, correctTitle, incorrectTitle, questionLabel, correctLabel, incorrectLabel and drumSrc.`);
+  const parsed = questions.map((question, index) => {
+    const field = `${filename}: quiz.questions[${index}]`;
+    if (!question || typeof question !== "object") throw new Error(`${field} must be an object.`);
+    const { prompt, options, answer } = question as Record<string, unknown>;
+    if (typeof prompt !== "string" || !prompt.trim() || !Array.isArray(options) || options.length < 2) {
+      throw new Error(`${field}: prompt and at least two options are required.`);
+    }
+    const choices = options.map(option => {
+      if (!option || typeof option !== "object") throw new Error(`${field}: each option needs id and text.`);
+      const { id, text } = option as Record<string, unknown>;
+      if (typeof id !== "string" || !id.trim() || typeof text !== "string" || !text.trim()) throw new Error(`${field}: each option needs id and text.`);
+      return { id, text };
+    });
+    if (new Set(choices.map(choice => choice.id)).size !== choices.length || typeof answer !== "string" || !choices.some(choice => choice.id === answer)) {
+      throw new Error(`${field}: option ids must be unique and answer must match an option id.`);
+    }
+    return { prompt, options: choices, answer };
+  });
+  return { title, progressLabel, questions: parsed, result: result as EventQuiz["result"] };
+}
 
 export const events: EventMemory[] = eventContents.map(([id, content]) => {
   const filename = `public/memories/${id}/content.json`;
@@ -89,5 +126,8 @@ export const events: EventMemory[] = eventContents.map(([id, content]) => {
   if (photos !== undefined && (!Array.isArray(photos) || photos.some(photo => !photo || typeof photo.src !== "string" || !photo.src.trim() || typeof photo.alt !== "string"))) {
     throw new Error(`${filename}: photos must be an array with src and alt for each photo.`);
   }
-  return content;
+  return { ...content, ...("quiz" in content ? { quiz: readQuiz(content.quiz, filename) } : {}) };
 });
+
+// The alternate quiz outcome occupies memo-7's position, rather than another sequential stop.
+export const eventSequence = events.filter(event => event.id !== "memo-67");

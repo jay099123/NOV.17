@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef, type RefObject } from "react";
 
 export const ZIPPER_TRANSITION_DURATION_MS = 4600;
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
@@ -9,20 +9,25 @@ type Point = readonly [number, number];
 const leftRail: Point[] = [[555, 92], [473, 144], [367, 194], [263, 246], [185, 294], [138, 346], [114, 405], [122, 451], [104, 507], [85, 568], [62, 631], [46, 695], [37, 751], [52, 796], [45, 843], [25, 888]];
 const rightRail: Point[] = [[565, 90], [558, 150], [550, 227], [532, 322], [530, 420], [508, 526], [485, 623], [443, 700], [381, 753], [303, 793], [215, 826], [136, 851], [74, 883]];
 
-function traceRail(path: Path2D, points: Point[], move = true) {
-  if (move) path.moveTo(...points[0]);
-  else path.lineTo(...points[0]);
+function railCurve(points: Point[], move = true) {
+  let path = `${move ? "M" : "L"}${points[0].join(" ")}`;
   for (let index = 0; index < points.length - 1; index++) {
     const previous = points[Math.max(0, index - 1)];
     const current = points[index];
     const next = points[index + 1];
     const after = points[Math.min(points.length - 1, index + 2)];
-    path.bezierCurveTo(current[0] + (next[0] - previous[0]) / 6, current[1] + (next[1] - previous[1]) / 6, next[0] - (after[0] - current[0]) / 6, next[1] - (after[1] - current[1]) / 6, ...next);
+    path += `C${[current[0] + (next[0] - previous[0]) / 6, current[1] + (next[1] - previous[1]) / 6, next[0] - (after[0] - current[0]) / 6, next[1] - (after[1] - current[1]) / 6, ...next].join(" ")}`;
   }
+  return path;
 }
 
-export default function ZipperTransition({ ready, onCovered, onComplete }: { ready: boolean; onCovered: () => void; onComplete: () => void }) {
+const openingCurve = `${railCurve(leftRail)}${railCurve([...rightRail].reverse(), false)}Z`;
+
+export default function ZipperTransition({ sourceRef, ready, onCovered, onComplete }: { sourceRef: RefObject<HTMLElement | null>; ready: boolean; onCovered: () => void; onComplete: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const openingRef = useRef<SVGPathElement>(null);
+  const maskId = `zipper-page-${useId().replaceAll(":", "")}`;
   const readyRef = useRef(ready);
   useEffect(() => { readyRef.current = ready; }, [ready]);
 
@@ -30,6 +35,27 @@ export default function ZipperTransition({ ready, onCovered, onComplete }: { rea
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
+    const source = sourceRef.current?.querySelector<HTMLElement>(".event-page");
+    const surface = surfaceRef.current;
+    if (!source || !surface) { onComplete(); return; }
+    // Freeze the visible page, including text entrances and playback controls.
+    const snapshot = source.cloneNode(true) as HTMLElement;
+    const originals = [source, ...source.querySelectorAll<HTMLElement>("*")];
+    const copies = [snapshot, ...snapshot.querySelectorAll<HTMLElement>("*")];
+    originals.forEach((original, index) => {
+      const copy = copies[index];
+      copy.removeAttribute("data-testid");
+      if (original.classList.contains("event-line")) {
+        const style = getComputedStyle(original);
+        Object.assign(copy.style, { animation: "none", opacity: style.opacity, transform: style.transform, visibility: style.visibility });
+      }
+      if (original instanceof HTMLInputElement && copy instanceof HTMLInputElement) copy.value = original.value;
+    });
+    surface.replaceChildren(snapshot);
+    originals.forEach((original, index) => {
+      copies[index].scrollTop = original.scrollTop;
+      copies[index].scrollLeft = original.scrollLeft;
+    });
     const portrait = new Image();
     const closedTexture = document.createElement("canvas");
     closedTexture.width = 56; closedTexture.height = 909;
@@ -56,12 +82,9 @@ export default function ZipperTransition({ ready, onCovered, onComplete }: { rea
     portrait.src = "/homepage/photos/bucc.jpg";
     if (portrait.complete) loaded();
     const portraitMask = new Path2D("M255 250 C300 213 421 208 480 300 L500 355 L470 440 C470 560 437 649 357 705 L277 761 L208 767 L173 797 L88 768 L95 667 L90 585 L119 535 L157 518 L171 451 L201 394 L202 311 Z");
-    const left = new Path2D(); traceRail(left, leftRail);
-    const right = new Path2D(); traceRail(right, rightRail);
-    const opening = new Path2D();
-    traceRail(opening, leftRail);
-    traceRail(opening, [...rightRail].reverse(), false);
-    opening.closePath();
+    const left = new Path2D(railCurve(leftRail));
+    const right = new Path2D(railCurve(rightRail));
+    const opening = new Path2D(openingCurve);
     const puller = new Path2D("M582 10 L652 0 L672 47 L608 102 L588 166 L626 169 C673 169 684 222 671 268 C661 307 623 335 586 319 L554 300 L543 252 L558 193 L543 160 L522 135 L512 93 Z");
     let frame = 0;
     let started: number | null = null;
@@ -81,24 +104,12 @@ export default function ZipperTransition({ ready, onCovered, onComplete }: { rea
       const sourceScale = Math.min(height * .8 / 1000, width * .6 / 680);
       context.setTransform(density, 0, 0, density, 0, 0);
       context.clearRect(0, 0, width, height);
-      context.fillStyle = "#f5f3eb";
-      context.fillRect(0, 0, width, height);
-      context.strokeStyle = "#20221e0c";
-      context.lineWidth = 1;
-      for (let y = 130; y < height; y += 160) {
-        context.beginPath(); context.moveTo(0, y); context.lineTo(width, y + 35); context.stroke();
-      }
+      surface.style.transform = `scale(${zoom})`;
+      openingRef.current?.setAttribute("transform", `translate(${width / 2} ${height / 2}) scale(${zoom * sourceScale}) translate(-340 -455) matrix(${spread} 0 ${shear} 1 ${340 * (1 - spread) - shear * 455} 0)`);
+      openingRef.current?.setAttribute("opacity", unzip > 0 ? "1" : "0");
       context.translate(width / 2, height / 2);
       context.scale(zoom * sourceScale, zoom * sourceScale);
       context.translate(-340, -455);
-      if (unzip > 0) {
-        context.save();
-        context.transform(spread, 0, shear, 1, 340 * (1 - spread) - shear * 455, 0);
-        context.globalCompositeOperation = "destination-out";
-        context.fill(opening);
-        context.restore();
-      }
-
       if (enter * leave > 0 && portrait.naturalWidth > 0) {
         context.save();
         context.clip(opening);
@@ -166,8 +177,18 @@ export default function ZipperTransition({ ready, onCovered, onComplete }: { rea
       cancelAnimationFrame(frame);
       portrait.onload = portrait.onerror = null;
       closedTexture.width = closedTexture.height = 0;
+      surface.replaceChildren();
     };
-  }, [onCovered, onComplete]);
+  }, [sourceRef, onCovered, onComplete]);
 
-  return <div className="zipper-transition" aria-hidden="true" data-testid="zipper-transition"><canvas ref={canvasRef} /></div>;
+  return <div className="zipper-transition" aria-hidden="true" inert data-testid="zipper-transition">
+    <svg className="zipper-page-mask" width="100%" height="100%">
+      <defs><mask id={maskId} x="0" y="0" width="100%" height="100%" maskUnits="userSpaceOnUse" style={{ maskType: "luminance" }}>
+        <rect width="100%" height="100%" fill="white" />
+        <path ref={openingRef} d={openingCurve} fill="black" opacity="0" />
+      </mask></defs>
+    </svg>
+    <div className="zipper-page-surface" style={{ mask: `url(#${maskId})` }}><div ref={surfaceRef} className="zipper-page-snapshot" /></div>
+    <canvas ref={canvasRef} />
+  </div>;
 }

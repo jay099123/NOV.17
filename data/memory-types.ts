@@ -8,12 +8,27 @@ export type PageColors = {
 };
 export type Photo = { src: string; alt: string; caption: string };
 export type Song = { title: string; artist: string; src: string };
+export type EventQuiz = {
+  title: string;
+  progressLabel: string;
+  result: {
+    waitingText: string;
+    correctTitle: string;
+    incorrectTitle: string;
+    questionLabel: string;
+    correctLabel: string;
+    incorrectLabel: string;
+    drumSrc: string;
+  };
+  questions: { prompt: string; options: { id: string; text: string }[]; answer: string }[];
+};
 export type EventMemory = {
   id: string;
   cover: Pick<Photo, "src" | "alt">;
   song: Song;
   lines: string[];
   photos?: Pick<Photo, "src" | "alt">[];
+  quiz?: EventQuiz;
 };
 export type IntroContent = { lines: string[]; playLabel: string };
 export type StatsContent = { since: string; lines: [string, string, string]; playLabel: string };

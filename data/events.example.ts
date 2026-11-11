@@ -11,3 +11,28 @@ export const eventExample: EventMemory = {
     { src: "/memories/memo-1/photos/photo-02.jpg", alt: "第二張回憶照片" },
   ],
 };
+
+export const quizExample: EventMemory = {
+  id: "memo-6.5",
+  cover: { src: "/memories/memo-6.5/photos/background.png", alt: "問答背景圖片" },
+  song: { title: "Quiz Theme", artist: "Example Artist", src: "/memories/memo-6.5/audio/song.mp3" },
+  lines: [],
+  quiz: {
+    title: "回憶問答",
+    progressLabel: "第 {current} 題，共 {total} 題",
+    result: {
+      waitingText: "結果即將揭曉……",
+      correctTitle: "你答對了！！",
+      incorrectTitle: "你答錯了！！",
+      questionLabel: "第 {number} 題",
+      correctLabel: "答對",
+      incorrectLabel: "答錯",
+      drumSrc: "/memories/memo-6.5/audio/drumroll.wav",
+    },
+    questions: [{
+      prompt: "在這裡填寫題目",
+      options: [{ id: "A", text: "第一個選項" }, { id: "B", text: "第二個選項" }, { id: "C", text: "第三個選項" }],
+      answer: "A",
+    }],
+  },
+};

@@ -2,12 +2,12 @@ import { chromium, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { loadMemoryData } from './load-memory-data.mjs';
 
-const { events } = loadMemoryData();
+const { events, eventSequence } = loadMemoryData();
 const viewport = { width: 1440, height: 1080 };
 const developmentURL = process.env.NOV17_DEV_TEST_URL || 'http://127.0.0.1:3000';
 const productionURL = process.env.NOV17_TEST_URL;
 const storageKey = 'nov17:dev-audio-muted';
-const blank = id => id === 'memo-5' || id === 'memo-7';
+const blank = id => id === 'memo-5';
 const qa = new URL('../.qa/', import.meta.url);
 mkdirSync(qa, { recursive: true });
 const browser = await chromium.launch({ headless: true });
@@ -40,12 +40,17 @@ try {
   await expect(button).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(() => audio.evaluate(element => element.muted && !element.paused && element.currentTime >= 0)).toBe(true);
   expect(await audio.evaluate(element => element.currentTime)).toBeGreaterThanOrEqual(position);
-  for (const [index, event] of events.entries()) {
-    await expect(page.getByTestId('event-page')).toHaveAttribute('data-event', event.id);
+  for (const [index, event] of eventSequence.entries()) {
+    await expect(page.getByTestId('event-page')).toHaveAttribute('data-event', event.id, { timeout: 12000 });
     await expect(audio).toHaveAttribute('src', event.song.src);
     await expect(button).toHaveCount(blank(event.id) ? 0 : 1);
     await expect.poll(() => audio.evaluate(element => element.muted && !element.paused)).toBe(true);
-    if (index < events.length - 1) await page.keyboard.press('ArrowRight');
+    if (event.quiz) {
+      for (const question of event.quiz.questions) {
+        await expect(page.getByTestId('event-quiz').getByRole('heading', { level: 2 })).toHaveText(question.prompt);
+        await page.locator(`[data-option="${question.answer}"]`).click();
+      }
+    } else if (index < eventSequence.length - 1) await page.keyboard.press('ArrowRight');
   }
   await page.getByRole('button', { name: '從第一個事件重新播放' }).click();
   await expect(page.getByTestId('event-page')).toHaveAttribute('data-event', 'memo-1');
